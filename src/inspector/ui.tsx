@@ -142,7 +142,7 @@ export function InspectorOverlay({ target }: { target: TargetInfo | null }) {
           boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
         }}
       >
-        <span style={{ fontSize: 10 }}>
+        <span style={{ fontSize: 10, fontWeight: 500 }}>
           {name}
           {line != null && !failed && <span style={{ opacity: 0.75 }}>:{line}</span>}
         </span>
