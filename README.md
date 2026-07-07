@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# open-in-code-editor
 
-## Getting Started
+Click-to-source inspector for Next.js apps. Hold <kbd>⌥ Option</kbd> to
+highlight any element in your running dev server — a label shows the
+component name, line, and source file — then <kbd>⌥ Option</kbd>+click to
+open that exact location in your editor.
 
-First, run the development server:
+- Works with Server and Client Components (Next.js 16, Turbopack, React 19)
+- Opens VS Code, VS Code Insiders, Cursor, Windsurf, or Zed via their URL
+  schemes — pick one in the floating selector shown while inspecting
+- Zero build config: rides the source-map resolution endpoint the Next.js
+  dev server already ships; renders nothing in production builds
+
+## Try it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000, hold <kbd>⌥</kbd>, hover, click.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Use it in your own app
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Copy `src/inspector/` into your project.
+2. In `app/layout.tsx`, render inside `<body>`:
 
-## Learn More
+   ```tsx
+   {process.env.NODE_ENV === "development" && (
+     <Inspector projectRoot={process.cwd()} />
+   )}
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+3. Optional: copy `src/app/api/inspector/route.ts` so the editor picker only
+   lists editors installed on your machine.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Requires a Next.js 16 dev server (Turbopack, default `.next` distDir) and
+React 19 in dev mode. The editor choice persists in localStorage; the
+"Auto" option defers to the dev server's own detection
+(`REACT_EDITOR`/`EDITOR` env vars) instead of URL schemes.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## How it works
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+React 19 removed `element._debugSource`, which older click-to-code tools
+relied on. This inspector instead walks the fiber `_debugOwner` chain and
+parses each owner's `_debugStack` — an `Error` whose stack points at the JSX
+call site in compiled code — then asks the dev server's
+`/__nextjs_original-stack-frames` endpoint to source-map those frames back
+to your `src/` files. Client-chunk frames are rewritten to their on-disk
+`.next/dev/static/` twins so they resolve too. Opening the editor is a plain
+`vscode://file/<path>:<line>:<column>`-style deeplink fired from the browser.
