@@ -99,15 +99,19 @@ type ResolvedFrame = {
 }
 
 /**
- * Resolve where the element's JSX is written in this project. Returns null
- * when nothing outside node_modules/framework internals matches.
+ * Resolve the JSX call sites for this element, walking outward through the
+ * owner chain: index 0 is the innermost site (inside the component that
+ * directly renders the element — its "definition"), and the last entry is
+ * the outermost site in the project (typically where the component is used
+ * on the page). Duplicates and node_modules/framework frames are dropped.
+ * Returns an empty array when nothing in the project matches.
  */
-export async function resolveSource(
+export async function resolveSources(
   sources: DebugSource[],
   projectRoot: string
-): Promise<SourceLocation | null> {
+): Promise<SourceLocation[]> {
   const frames = candidateFrames(sources, projectRoot)
-  if (frames.length === 0) return null
+  if (frames.length === 0) return []
 
   const res = await fetch("/__nextjs_original-stack-frames", {
     method: "POST",
@@ -119,25 +123,32 @@ export async function resolveSource(
       isAppDirectory: true,
     }),
   })
-  if (!res.ok) return null
+  if (!res.ok) return []
   const resolved = (await res.json()) as ResolvedFrame[]
 
+  const locations: SourceLocation[] = []
+  const seen = new Set<string>()
   for (let i = 0; i < resolved.length; i++) {
     const entry = resolved[i]
     if (entry?.status !== "fulfilled") continue
     const frame = entry.value?.originalStackFrame
     if (!frame?.file || frame.ignored) continue
     if (frame.file.includes("node_modules") || frame.file.startsWith("node:")) continue
+    const line1 = frame.line1 ?? 1
+    const column1 = frame.column1 ?? 1
+    const key = `${frame.file}:${line1}:${column1}`
+    if (seen.has(key)) continue
+    seen.add(key)
     const methodName = frames[i]?.methodName.replace(/^Object\./, "")
-    return {
+    locations.push({
       file: frame.file,
-      line1: frame.line1 ?? 1,
-      column1: frame.column1 ?? 1,
+      line1,
+      column1,
       enclosingName:
         methodName && methodName !== "<anonymous>" ? methodName : null,
-    }
+    })
   }
-  return null
+  return locations
 }
 
 export type EditorOption = { id: string; label: string }
