@@ -1,6 +1,6 @@
 {
   "name": "open-in-code-editor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "bin": {
     "open-in-code-editor": "bin/cli.mjs"
   },
