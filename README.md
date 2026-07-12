@@ -28,8 +28,23 @@ That copies the inspector into your project and wires up `layout.tsx` for you
 using a **relative import** (no `@/*` path alias required). Start your dev
 server, hold <kbd>⌥</kbd>, hover, and click.
 
-The command is idempotent — run it again any time to re-copy without
-duplicating the wiring.
+The command is idempotent — it skips files that already exist and never
+edits `layout.tsx` twice.
+
+### Updating
+
+To pull a newer version of the inspector into a project that already has it,
+re-copy the files with `update` (the install skips existing files, so a plain
+re-run won't refresh them):
+
+```bash
+npx open-in-code-editor@latest update
+```
+
+That overwrites the `inspector/` folder and API route with the latest version
+while leaving your `layout.tsx` wiring alone. `--force` is an alias for
+`update`. It's a copy-in tool, not a dependency, so there's nothing for
+`npm update` to act on.
 
 ### What it adds
 

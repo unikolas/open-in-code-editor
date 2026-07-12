@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 // One-command installer for the click-to-source inspector.
-//   npx open-in-code-editor
+//   npx open-in-code-editor            install (skips files that exist)
+//   npx open-in-code-editor update     re-copy the inspector to this version
+//   npx open-in-code-editor --force    same as update (alias)
 // Copies the inspector into your app and wires up layout.tsx with a relative
-// import (no `@/` alias required). Idempotent and dependency-free.
+// import (no `@/` alias required). Idempotent and dependency-free. The layout
+// wiring is never touched twice; `update`/`--force` only overwrites the copied
+// inspector files, so pin a version to upgrade: `npx open-in-code-editor@latest`.
 
 import {
   copyFileSync,
@@ -17,6 +21,11 @@ import { fileURLToPath } from "node:url"
 
 const templates = join(dirname(fileURLToPath(import.meta.url)), "..", "templates")
 const cwd = process.cwd()
+
+// `update`/`--force`/`-f` re-copy existing files instead of skipping them.
+const force = process.argv
+  .slice(2)
+  .some((a) => a === "update" || a === "--force" || a === "-f" || a === "--update")
 
 function log(msg) {
   console.log(msg)
@@ -44,27 +53,37 @@ if (!found) {
 }
 const { base, appDir, layout } = found
 
-// 2. Copy the inspector folder.
+// 2. Copy the inspector folder (overwrite existing files with update/--force).
 const inspectorDir = join(base, "inspector")
-if (existsSync(inspectorDir)) {
-  log(`• inspector/ already exists at ${relative(cwd, inspectorDir)} — skipping copy.`)
+const inspectorExists = existsSync(inspectorDir)
+if (inspectorExists && !force) {
+  log(
+    `• inspector/ already exists at ${relative(cwd, inspectorDir)} — ` +
+      "re-run with `update` to refresh it. Skipping.",
+  )
 } else {
   mkdirSync(inspectorDir, { recursive: true })
   for (const file of readdirSync(join(templates, "inspector"))) {
     copyFileSync(join(templates, "inspector", file), join(inspectorDir, file))
   }
-  log(`✓ Copied inspector into ${relative(cwd, inspectorDir)}/`)
+  const dst = relative(cwd, inspectorDir)
+  log(inspectorExists ? `✓ Updated inspector in ${dst}/` : `✓ Copied inspector into ${dst}/`)
 }
 
 // 3. Copy the optional API route (install-aware editor picker).
 const routeDir = join(appDir, "api", "inspector")
 const routeFile = join(routeDir, "route.ts")
-if (existsSync(routeFile)) {
-  log(`• API route already exists at ${relative(cwd, routeFile)} — skipping.`)
+const routeExists = existsSync(routeFile)
+if (routeExists && !force) {
+  log(
+    `• API route already exists at ${relative(cwd, routeFile)} — ` +
+      "re-run with `update` to refresh it. Skipping.",
+  )
 } else {
   mkdirSync(routeDir, { recursive: true })
   copyFileSync(join(templates, "api", "route.ts"), routeFile)
-  log(`✓ Copied API route into ${relative(cwd, routeFile)}`)
+  const dst = relative(cwd, routeFile)
+  log(routeExists ? `✓ Updated API route at ${dst}` : `✓ Copied API route into ${dst}`)
 }
 
 // 4. Patch layout.tsx idempotently with a relative import.
