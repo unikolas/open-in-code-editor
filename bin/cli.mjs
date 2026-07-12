@@ -1,0 +1,103 @@
+#!/usr/bin/env node
+// One-command installer for the click-to-source inspector.
+//   npx open-in-code-editor
+// Copies the inspector into your app and wires up layout.tsx with a relative
+// import (no `@/` alias required). Idempotent and dependency-free.
+
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs"
+import { dirname, join, relative } from "node:path"
+import { fileURLToPath } from "node:url"
+
+const templates = join(dirname(fileURLToPath(import.meta.url)), "..", "templates")
+const cwd = process.cwd()
+
+function log(msg) {
+  console.log(msg)
+}
+
+// 1. Locate the app dir and its base (src/app -> base "src", app -> base ".").
+function findLayout() {
+  for (const base of ["src", "."]) {
+    const appDir = join(cwd, base, "app")
+    for (const ext of ["tsx", "jsx"]) {
+      const layout = join(appDir, `layout.${ext}`)
+      if (existsSync(layout)) return { base: join(cwd, base), appDir, layout }
+    }
+  }
+  return null
+}
+
+const found = findLayout()
+if (!found) {
+  console.error(
+    "Could not find app/layout.tsx (or src/app/layout.tsx). Run this from the\n" +
+      "root of a Next.js app router project.",
+  )
+  process.exit(1)
+}
+const { base, appDir, layout } = found
+
+// 2. Copy the inspector folder.
+const inspectorDir = join(base, "inspector")
+if (existsSync(inspectorDir)) {
+  log(`• inspector/ already exists at ${relative(cwd, inspectorDir)} — skipping copy.`)
+} else {
+  mkdirSync(inspectorDir, { recursive: true })
+  for (const file of readdirSync(join(templates, "inspector"))) {
+    copyFileSync(join(templates, "inspector", file), join(inspectorDir, file))
+  }
+  log(`✓ Copied inspector into ${relative(cwd, inspectorDir)}/`)
+}
+
+// 3. Copy the optional API route (install-aware editor picker).
+const routeDir = join(appDir, "api", "inspector")
+const routeFile = join(routeDir, "route.ts")
+if (existsSync(routeFile)) {
+  log(`• API route already exists at ${relative(cwd, routeFile)} — skipping.`)
+} else {
+  mkdirSync(routeDir, { recursive: true })
+  copyFileSync(join(templates, "api", "route.ts"), routeFile)
+  log(`✓ Copied API route into ${relative(cwd, routeFile)}`)
+}
+
+// 4. Patch layout.tsx idempotently with a relative import.
+let importPath = relative(dirname(layout), join(inspectorDir, "Inspector"))
+if (!importPath.startsWith(".")) importPath = `./${importPath}`
+importPath = importPath.split("\\").join("/") // windows -> posix
+
+const snippet =
+  "{process.env.NODE_ENV === \"development\" && (\n" +
+  "        <Inspector projectRoot={process.cwd()} />\n" +
+  "      )}"
+
+let src = readFileSync(layout, "utf8")
+if (/from ["'][^"']*inspector\/Inspector["']/.test(src)) {
+  log("• layout already imports Inspector — leaving it as is.")
+} else {
+  const importLine = `import { Inspector } from "${importPath}"\n`
+  const lastImport = [...src.matchAll(/^import[^\n]*\n/gm)].pop()
+  const bodyClose = src.lastIndexOf("</body>")
+  if (lastImport && bodyClose !== -1) {
+    const insertAt = lastImport.index + lastImport[0].length
+    src = src.slice(0, insertAt) + importLine + src.slice(insertAt)
+    const bodyIdx = src.lastIndexOf("</body>")
+    src = src.slice(0, bodyIdx) + snippet + "\n      " + src.slice(bodyIdx)
+    writeFileSync(layout, src)
+    log(`✓ Wired ${relative(cwd, layout)} (import "${importPath}")`)
+  } else {
+    log(
+      "! Could not auto-edit layout — add manually inside <body>:\n" +
+        `    import { Inspector } from "${importPath}"\n` +
+        `    ${snippet.replace(/\n/g, "\n    ")}`,
+    )
+  }
+}
+
+log("\nDone. Start your dev server, then hold ⌥ Option and click any element.")

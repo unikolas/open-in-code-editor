@@ -1,12 +1,20 @@
 {
   "name": "open-in-code-editor",
   "version": "0.1.0",
-  "private": true,
+  "bin": {
+    "open-in-code-editor": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "templates"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "sync-templates": "node scripts/sync-templates.mjs",
+    "prepack": "node scripts/sync-templates.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

@@ -11,7 +11,56 @@ open that exact location in your editor.
 - Zero build config: rides the source-map resolution endpoint the Next.js
   dev server already ships; renders nothing in production builds
 
-## Try it
+## Install
+
+From the root of your Next.js app:
+
+```bash
+npx open-in-code-editor
+```
+
+That copies the inspector into your project and wires up `layout.tsx` for you
+using a **relative import** (no `@/*` path alias required). Start your dev
+server, hold <kbd>⌥</kbd>, hover, and click.
+
+The command is idempotent — run it again any time to re-copy without
+duplicating the wiring.
+
+### What it adds
+
+```
+your-app/
+  (src/)app/layout.tsx          # + import and a dev-only <Inspector/>
+  (src/)inspector/              # Inspector.tsx, fiber.ts, source.ts, ui.tsx
+  (src/)app/api/inspector/route.ts   # optional: install-aware editor picker
+```
+
+The `layout.tsx` edit looks like this:
+
+```tsx
+import { Inspector } from "../inspector/Inspector"
+// ...
+<body>
+  {children}
+  {process.env.NODE_ENV === "development" && (
+    <Inspector projectRoot={process.cwd()} />
+  )}
+</body>
+```
+
+**Requirements:** a Next.js 16 dev server (Turbopack, default `.next`
+distDir) and React 19 in dev mode.
+
+### Manual install
+
+If you'd rather not run the installer, copy the `inspector/` folder into your
+app and add the two lines above yourself (adjust the relative import path to
+where you placed the folder). The API route is optional — without it a static
+editor list is shown instead of only the editors installed on your machine.
+
+## Try the demo
+
+This repo is a runnable demo:
 
 ```bash
 pnpm install
@@ -20,24 +69,11 @@ pnpm dev
 
 Open http://localhost:3000, hold <kbd>⌥</kbd>, hover, click.
 
-## Use it in your own app
+## Notes
 
-1. Copy `src/inspector/` into your project.
-2. In `app/layout.tsx`, render inside `<body>`:
-
-   ```tsx
-   {process.env.NODE_ENV === "development" && (
-     <Inspector projectRoot={process.cwd()} />
-   )}
-   ```
-
-3. Optional: copy `src/app/api/inspector/route.ts` so the editor picker only
-   lists editors installed on your machine.
-
-Requires a Next.js 16 dev server (Turbopack, default `.next` distDir) and
-React 19 in dev mode. The editor choice persists in localStorage; the
-"Auto" option defers to the dev server's own detection
-(`REACT_EDITOR`/`EDITOR` env vars) instead of URL schemes.
+The editor picker appears top-right while inspecting; your choice persists in
+localStorage. The **Auto** option defers to the dev server's own editor
+detection (`REACT_EDITOR`/`EDITOR` env vars) instead of a URL scheme.
 
 ## How it works
 
@@ -49,3 +85,17 @@ call site in compiled code — then asks the dev server's
 to your `src/` files. Client-chunk frames are rewritten to their on-disk
 `.next/dev/static/` twins so they resolve too. Opening the editor is a plain
 `vscode://file/<path>:<line>:<column>`-style deeplink fired from the browser.
+
+## Uninstall
+
+Delete the `inspector/` folder and `app/api/inspector/route.ts`, then remove
+the import and `<Inspector/>` lines from `layout.tsx`.
+
+## Development
+
+`inspector/` is the single source of truth; `templates/` (what the installer
+ships) is generated from it. After editing the inspector, run:
+
+```bash
+pnpm sync-templates
+```
