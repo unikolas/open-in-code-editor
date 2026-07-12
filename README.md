@@ -5,6 +5,11 @@ highlight any element in your running dev server — a label shows the
 component name, line, and source file — then <kbd>⌥ Option</kbd>+click to
 open that exact location in your editor.
 
+- **Source or usage**: <kbd>⌥ Option</kbd>+click opens the component that
+  renders the element (its definition); add <kbd>⇧ Shift</kbd> to jump
+  instead to where that component is *used* on the page. The label turns
+  violet and reads "usage" while Shift is held, so you can see where a
+  click will land before you click.
 - Works with Server and Client Components (Next.js 16, Turbopack, React 19)
 - Opens VS Code, VS Code Insiders, Cursor, Windsurf, or Zed via their URL
   schemes — pick one in the floating selector shown while inspecting
@@ -85,6 +90,10 @@ call site in compiled code — then asks the dev server's
 to your `src/` files. Client-chunk frames are rewritten to their on-disk
 `.next/dev/static/` twins so they resolve too. Opening the editor is a plain
 `vscode://file/<path>:<line>:<column>`-style deeplink fired from the browser.
+
+Because the whole owner chain resolves — innermost (the element's own
+definition) through outermost (where it's used on the page) — a plain click
+opens the first and <kbd>⇧ Shift</kbd>+click opens the last.
 
 ## Uninstall
 
