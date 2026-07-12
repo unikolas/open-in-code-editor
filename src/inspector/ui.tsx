@@ -19,7 +19,12 @@ export type TargetInfo = {
   file: string | null // null while resolving
   line: number | null
   failed: boolean
+  // "source": innermost site (default). "usage": outermost site in the
+  // project, shown while Shift is held — where the component is used.
+  mode: "source" | "usage"
 }
+
+const USAGE = "#7c3aed"
 
 /**
  * Floating editor picker, top-right; visible only while inspecting. A plain
@@ -92,7 +97,8 @@ export function EditorSelect({
 
 export function InspectorOverlay({ target }: { target: TargetInfo | null }) {
   if (!target) return null
-  const { rect, name, file, line, failed } = target
+  const { rect, name, file, line, failed, mode } = target
+  const usage = mode === "usage" && !failed
 
   const labelAbove = rect.top >= LABEL_HEIGHT + GAP * 2
   const labelTop = labelAbove
@@ -133,7 +139,7 @@ export function InspectorOverlay({ target }: { target: TargetInfo | null }) {
           alignItems: "center",
           gap: 6,
           padding: "0 8px",
-          background: failed ? "#b91c1c" : BLUE,
+          background: failed ? "#b91c1c" : usage ? USAGE : BLUE,
           color: "#fff",
           fontSize: 11,
           lineHeight: 1,
@@ -142,6 +148,19 @@ export function InspectorOverlay({ target }: { target: TargetInfo | null }) {
           boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
         }}
       >
+        {usage && (
+          <span
+            style={{
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: 0.4,
+              textTransform: "uppercase",
+              opacity: 0.85,
+            }}
+          >
+            usage
+          </span>
+        )}
         <span style={{ fontSize: 10, fontWeight: 500 }}>
           {name}
           {line != null && !failed && <span style={{ opacity: 0.75 }}>:{line}</span>}

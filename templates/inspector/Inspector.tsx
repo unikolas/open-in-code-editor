@@ -5,9 +5,12 @@
  *
  * Hold Option/Alt to highlight the element under the cursor with its
  * component name and source location; Option+click opens that location in
- * your editor. While inspecting, an editor picker appears top-right.
- * Source-map resolution rides the endpoint built into the Next.js dev
- * server; opening uses the chosen editor's URL scheme.
+ * your editor. Add Shift to jump to where the component is *used* on the
+ * page (the outermost call site) instead of its own definition — the label
+ * turns violet and reads "usage" so it's clear where a click will land.
+ * While inspecting, an editor picker appears top-right. Source-map
+ * resolution rides the endpoint built into the Next.js dev server; opening
+ * uses the chosen editor's URL scheme.
  *
  * ── Using this in another Next.js app ─────────────────────────────────────
  * Run `npx open-in-code-editor` from your app root — it copies this folder
@@ -37,7 +40,7 @@ import {
   detectEditors,
   FALLBACK_EDITORS,
   openInEditor,
-  resolveSource,
+  resolveSources,
   type EditorOption,
   type SourceLocation,
 } from "./source"
@@ -45,18 +48,25 @@ import { EditorSelect, InspectorOverlay, type TargetInfo } from "./ui"
 
 const EDITOR_STORAGE_KEY = "inspector.editor"
 
-const locationCache = new WeakMap<Element, Promise<SourceLocation | null>>()
+const locationCache = new WeakMap<Element, Promise<SourceLocation[]>>()
 
 function resolveElement(el: Element, projectRoot: string) {
   let promise = locationCache.get(el)
   if (!promise) {
     const fiber = getFiberFromNode(el)
     promise = fiber
-      ? resolveSource(getDebugSources(fiber), projectRoot)
-      : Promise.resolve(null)
+      ? resolveSources(getDebugSources(fiber), projectRoot)
+      : Promise.resolve<SourceLocation[]>([])
     locationCache.set(el, promise)
   }
   return promise
+}
+
+// With Shift held, target the outermost site (where the component is used)
+// instead of the innermost (the component's own definition).
+function pickLocation(locs: SourceLocation[], shift: boolean): SourceLocation | null {
+  if (locs.length === 0) return null
+  return shift && locs.length > 1 ? locs[locs.length - 1] : locs[0]
 }
 
 function isInspectorUi(node: EventTarget | null): boolean {
@@ -85,6 +95,9 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
   )
 
   const targetElRef = useRef<Element | null>(null)
+  const targetLocsRef = useRef<SourceLocation[] | null>(null)
+  const fiberNameRef = useRef("")
+  const shiftRef = useRef(false)
   const lastPointer = useRef({ x: 0, y: 0 })
   const editorRef = useRef(editor)
 
@@ -122,44 +135,60 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
 
     const clearTarget = () => {
       targetElRef.current = null
+      targetLocsRef.current = null
       setTarget(null)
     }
 
     const clearAll = () => {
+      shiftRef.current = false
       clearTarget()
       setInspecting(false)
+    }
+
+    // Paint the label/highlight from the current element, resolved locations,
+    // and Shift state. Re-run whenever any of those change (hover, resolve,
+    // Shift down/up, scroll) so the label always shows where a click will go.
+    const paint = () => {
+      const el = targetElRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const rect = { top: r.top, left: r.left, width: r.width, height: r.height }
+      const name = fiberNameRef.current
+      const locs = targetLocsRef.current
+
+      if (locs === null) {
+        setTarget({ rect, name, file: null, line: null, failed: false, mode: "source" })
+        return
+      }
+      const loc = pickLocation(locs, shiftRef.current)
+      if (!loc) {
+        setTarget({ rect, name, file: null, line: null, failed: true, mode: "source" })
+        return
+      }
+      // Derived from the picked site so the label can never disagree with
+      // where a click lands: anything but the innermost site is a "usage".
+      setTarget({
+        rect,
+        name: loc.enclosingName ?? name,
+        file: loc.file,
+        line: loc.line1,
+        failed: false,
+        mode: loc === locs[0] ? "source" : "usage",
+      })
     }
 
     const setFromElement = (el: Element) => {
       if (el === targetElRef.current) return
       targetElRef.current = el
-
       const fiber = getFiberFromNode(el)
-      const fiberName = fiber ? getDisplayName(fiber) : el.tagName.toLowerCase()
-      const toInfo = (
-        name: string,
-        file: string | null,
-        line: number | null,
-        failed = false
-      ): TargetInfo => {
-        const r = el.getBoundingClientRect()
-        return {
-          rect: { top: r.top, left: r.left, width: r.width, height: r.height },
-          name,
-          file,
-          line,
-          failed,
-        }
-      }
-      setTarget(toInfo(fiberName, null, null))
+      fiberNameRef.current = fiber ? getDisplayName(fiber) : el.tagName.toLowerCase()
+      targetLocsRef.current = null
+      paint()
 
-      resolveElement(el, projectRoot).then((loc) => {
+      resolveElement(el, projectRoot).then((locs) => {
         if (targetElRef.current !== el) return
-        setTarget(
-          loc
-            ? toInfo(loc.enclosingName ?? fiberName, loc.file, loc.line1)
-            : toInfo(fiberName, null, null, true)
-        )
+        targetLocsRef.current = locs
+        paint()
       })
     }
 
@@ -167,11 +196,13 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
       const el = targetElRef.current
       if (!el) return
       if (!el.isConnected) return clearTarget()
-      setTarget((prev) => {
-        if (!prev) return prev
-        const r = el.getBoundingClientRect()
-        return { ...prev, rect: { top: r.top, left: r.left, width: r.width, height: r.height } }
-      })
+      paint()
+    }
+
+    const setShift = (down: boolean) => {
+      if (shiftRef.current === down) return
+      shiftRef.current = down
+      if (targetElRef.current) paint()
     }
 
     const onPointerMove = (e: PointerEvent) => {
@@ -192,6 +223,7 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") return clearAll()
+      if (e.key === "Shift") return setShift(true)
       if (e.key !== "Alt") return
       setInspecting(true)
       const el = document.elementFromPoint(lastPointer.current.x, lastPointer.current.y)
@@ -200,6 +232,7 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
 
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === "Alt") clearAll()
+      else if (e.key === "Shift") setShift(false)
     }
 
     const onBlur = () => clearAll()
@@ -222,7 +255,9 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
       if (!e.altKey || !el || isInspectorUi(e.target)) return
       e.preventDefault()
       e.stopPropagation()
-      resolveElement(el, projectRoot).then((loc) => {
+      const shift = e.shiftKey
+      resolveElement(el, projectRoot).then((locs) => {
+        const loc = pickLocation(locs, shift)
         if (loc) openInEditor(loc, projectRoot, editorRef.current)
       })
     }
