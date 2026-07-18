@@ -14,6 +14,7 @@
     "type": "git",
     "url": "git+https://github.com/unikolas/open-in-code-editor.git"
   },
+  "license": "MIT",
   "bin": {
     "open-in-code-editor": "bin/cli.mjs"
   },
