@@ -46,8 +46,10 @@ function findLayout() {
 const found = findLayout()
 if (!found) {
   console.error(
-    "Could not find app/layout.tsx (or src/app/layout.tsx). Run this from the\n" +
-      "root of a Next.js app router project.",
+    "Could not find app/layout.tsx (or src/app/layout.tsx). This tool currently\n" +
+      "supports Next.js 16 (app router) only — run it from the root of one.\n" +
+      "Vite + React support is coming soon:\n" +
+      "https://github.com/unikolas/open-in-code-editor#supported-frameworks",
   )
   process.exit(1)
 }

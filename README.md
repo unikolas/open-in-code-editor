@@ -5,6 +5,8 @@ highlight any element in your running dev server — a label shows the
 component name, line, and source file — then <kbd>⌥ Option</kbd>+click to
 open that exact location in your editor.
 
+![open-in-code-editor in action: holding ⌥ highlights a component and shows its name, line, and file, with an editor picker top-right](docs/screenshot.png)
+
 - **Source or usage**: <kbd>⌥ Option</kbd>+click opens the component that
   renders the element (its definition); add <kbd>⇧ Shift</kbd> to jump
   instead to where that component is *used* on the page. The label turns
@@ -15,6 +17,16 @@ open that exact location in your editor.
   schemes — pick one in the floating selector shown while inspecting
 - Zero build config: rides the source-map resolution endpoint the Next.js
   dev server already ships; renders nothing in production builds
+
+## Supported frameworks
+
+| Framework | Status |
+| --- | --- |
+| **Next.js 16** (Turbopack, default `.next` distDir) + React 19 | ✅ Supported |
+| **Vite + React** | 🚧 Coming soon |
+
+More frameworks to follow. Running the installer outside a supported project
+does nothing to your files — it prints what it expects and exits.
 
 ## Install
 
