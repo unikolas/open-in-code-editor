@@ -25,8 +25,9 @@ open that exact location in your editor.
 | **Next.js 16** (Turbopack, default `.next` distDir) + React 19 | ✅ Supported |
 | **Vite + React** | 🚧 Coming soon |
 
-More frameworks to follow. Running the installer outside a supported project
-does nothing to your files — it prints what it expects and exits.
+More frameworks to follow. In a project without an app-router `layout.tsx/jsx`
+(such as a Vite app), the installer leaves your files untouched — it prints
+what it expects and exits.
 
 ## Install
 
