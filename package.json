@@ -1,6 +1,6 @@
 {
   "name": "open-in-code-editor",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "⌥-click any element in your Next.js dev server to open its source in your editor.",
   "keywords": [
     "nextjs",
