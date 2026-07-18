@@ -249,7 +249,7 @@ function writeEnvLocal() {
 function ensureGitignore() {
   const gi = join(cwd, ".gitignore")
   const content = existsSync(gi) ? readFileSync(gi, "utf8") : ""
-  if (/^\s*(\.env\.local|\*\.local|\.env\*)\s*$/m.test(content)) return
+  if (/^\s*(\.env\.local|\.env\*\.local|\.env\*|\*\.local)\s*$/m.test(content)) return
   appendFileSync(gi, (content && !content.endsWith("\n") ? "\n" : "") + ".env.local\n")
   log("✓ Added .env.local to .gitignore")
 }

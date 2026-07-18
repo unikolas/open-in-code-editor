@@ -227,14 +227,25 @@ function originalPositionFor(
   const source = map.sources[seg[1]]
   if (source == null) return null
 
+  // /@fs/ is Vite's way of serving an absolute path — unwrap to the fs path.
+  const raw = source.startsWith("/@fs/") ? source.slice(4) : source
+
   let file: string
-  try {
-    const base = map.sourceRoot
-      ? new URL(map.sourceRoot.replace(/\/?$/, "/"), map.url)
-      : new URL(map.url)
-    file = new URL(source, base).pathname.replace(/^\/+/, "")
-  } catch {
-    file = source.replace(/^\/+/, "")
+  if (raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw)) {
+    // Absolute source path (some toolchains emit these) — keep it as-is so
+    // openInEditor sees the leading slash and won't re-prefix projectRoot.
+    file = raw
+  } else {
+    // Vite's usual case: source is relative to the served module. Resolve it
+    // to a project-relative path (leading slash stripped).
+    try {
+      const base = map.sourceRoot
+        ? new URL(map.sourceRoot.replace(/\/?$/, "/"), map.url)
+        : new URL(map.url)
+      file = new URL(raw, base).pathname.replace(/^\/+/, "")
+    } catch {
+      file = raw.replace(/^\/+/, "")
+    }
   }
   return { file, line1: seg[2] + 1, column1: seg[3] + 1 }
 }
@@ -308,10 +319,12 @@ export function openInEditor(
   projectRoot: string,
   editor: string
 ): void {
-  const rel = loc.file.replace(/^\/+/, "")
-  const abs = projectRoot ? `${projectRoot.replace(/\/+$/, "")}/${rel}` : null
+  const root = projectRoot ? projectRoot.replace(/\/+$/, "") : ""
+  const isAbsolute = loc.file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(loc.file)
+  // Absolute paths are used as-is; only project-relative paths get root prefixed.
+  const abs = isAbsolute ? loc.file : root ? `${root}/${loc.file}` : null
   if (editor === "auto" || !abs) {
-    const target = `${abs ?? rel}:${loc.line1}:${loc.column1}`
+    const target = `${abs ?? loc.file}:${loc.line1}:${loc.column1}`
     void fetch(`/__open-in-editor?file=${encodeURIComponent(target)}`)
     return
   }
