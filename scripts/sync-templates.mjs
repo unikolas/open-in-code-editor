@@ -4,7 +4,7 @@
 // `npx open-in-code-editor` ships these generated copies. Run via
 // `pnpm sync-templates` or automatically on `prepack`.
 
-import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs"
+import { copyFileSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -13,15 +13,22 @@ const templates = join(root, "templates")
 
 rmSync(templates, { recursive: true, force: true })
 
-// Inspector component + helpers -> templates/inspector/
 const inspectorSrc = join(root, "src", "inspector")
 const inspectorOut = join(templates, "inspector")
 mkdirSync(inspectorOut, { recursive: true })
-for (const file of readdirSync(inspectorSrc)) {
+
+// Shared inspector files — identical for every framework.
+for (const file of ["Inspector.tsx", "fiber.ts", "ui.tsx"]) {
   copyFileSync(join(inspectorSrc, file), join(inspectorOut, file))
 }
 
-// Optional API route -> templates/api/route.ts
+// Framework-specific source resolvers. The CLI copies the right one in as
+// source.ts. The demo app (Next.js) imports source.ts directly, so the Next
+// implementation *is* src/inspector/source.ts.
+copyFileSync(join(inspectorSrc, "source.ts"), join(inspectorOut, "source.next.ts"))
+copyFileSync(join(inspectorSrc, "source.vite.ts"), join(inspectorOut, "source.vite.ts"))
+
+// Optional Next.js API route -> templates/api/route.ts
 const routeOut = join(templates, "api")
 mkdirSync(routeOut, { recursive: true })
 copyFileSync(
@@ -29,4 +36,6 @@ copyFileSync(
   join(routeOut, "route.ts"),
 )
 
-console.log("Synced templates/ from src/inspector/ and the API route.")
+console.log(
+  "Synced templates/ (shared inspector + source.next/source.vite + API route).",
+)
