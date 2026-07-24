@@ -153,6 +153,13 @@ export async function resolveSources(
 
 export type EditorOption = { id: string; label: string }
 
+/**
+ * Dev gate for the shared inspector files. Framework-specific so the shared
+ * code never touches `process` directly — in a Vite project that fails to
+ * typecheck without `@types/node` (the Vite resolver uses `import.meta.env`).
+ */
+export const IS_DEV = process.env.NODE_ENV === "development"
+
 export const FALLBACK_EDITORS: EditorOption[] = [
   { id: "vscode", label: "VS Code" },
   { id: "vscode-insiders", label: "VS Code Insiders" },

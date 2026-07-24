@@ -142,8 +142,13 @@ localStorage. The **Auto** option defers to the dev server's own editor
 detection instead of a URL scheme — Next.js's launch-editor
 (`REACT_EDITOR`/`EDITOR`), or Vite's built-in `/__open-in-editor`
 (`LAUNCH_EDITOR`/`EDITOR`). On Vite the picker always shows the full editor
-list (there's no install-detection route); if `.env.local` is missing, every
-editor choice falls back to Vite's `/__open-in-editor`.
+list (there's no install-detection route); if `VITE_INSPECTOR_ROOT` isn't
+loaded, every editor choice falls back to Vite's `/__open-in-editor` — which
+picks the editor itself, so your selection can't be honored and the inspector
+logs a console warning saying so. That happens when the dev server wasn't
+restarted after install, and for teammates who pulled the wired entry file
+but don't have the (gitignored) `.env.local` — fix either by running
+`npx open-in-code-editor` and restarting the dev server.
 
 ## How it works
 

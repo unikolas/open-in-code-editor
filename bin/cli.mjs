@@ -107,7 +107,15 @@ if (inspectorExists && !force) {
   const resolver = framework === "next" ? "source.next.ts" : "source.vite.ts"
   for (const file of readdirSync(join(templates, "inspector"))) {
     if (file === "source.next.ts" || file === "source.vite.ts") continue
-    copyFileSync(join(templates, "inspector", file), join(inspectorDir, file))
+    const src = join(templates, "inspector", file)
+    const dst = join(inspectorDir, file)
+    if (framework === "vite" && file === "Inspector.tsx") {
+      // "use client" only means something to Next.js, and Rollup (Vite < 8)
+      // warns about module-level directives on every production build.
+      writeFileSync(dst, readFileSync(src, "utf8").replace(/^"use client"\r?\n\r?\n?/, ""))
+    } else {
+      copyFileSync(src, dst)
+    }
   }
   copyFileSync(join(templates, "inspector", resolver), join(inspectorDir, "source.ts"))
   const dst = relative(cwd, inspectorDir)

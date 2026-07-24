@@ -39,6 +39,7 @@ import { getDebugSources, getDisplayName, getFiberFromNode } from "./fiber"
 import {
   detectEditors,
   FALLBACK_EDITORS,
+  IS_DEV,
   openInEditor,
   resolveSources,
   type EditorOption,
@@ -100,6 +101,7 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
   const shiftRef = useRef(false)
   const lastPointer = useRef({ x: 0, y: 0 })
   const editorRef = useRef(editor)
+  const detectStartedRef = useRef(false)
 
   const changeEditor = (id: string) => {
     setEditor(id)
@@ -109,11 +111,13 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
     } catch {}
   }
 
+  // Detect installed editors on the first inspect, not at mount: the Next.js
+  // detection fetches the optional /api/inspector route, and doing that on
+  // every page load logs a 404 in the console when the route isn't installed.
   useEffect(() => {
-    if (process.env.NODE_ENV !== "development") return
-    let cancelled = false
+    if (!IS_DEV || !inspecting || detectStartedRef.current) return
+    detectStartedRef.current = true
     detectEditors().then((list) => {
-      if (cancelled) return
       setEditors(list)
       // If nothing was stored and the default isn't installed, pick the
       // first detected editor.
@@ -125,13 +129,10 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
         editorRef.current = list[0].id
       }
     })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  }, [inspecting])
 
   useEffect(() => {
-    if (process.env.NODE_ENV !== "development") return
+    if (!IS_DEV) return
 
     const clearTarget = () => {
       targetElRef.current = null
@@ -231,11 +232,27 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
     }
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Alt") clearAll()
-      else if (e.key === "Shift") setShift(false)
+      if (e.key === "Shift") return setShift(false)
+      if (e.key !== "Alt") return
+      // Releasing Alt while the editor picker has focus (its native dropdown
+      // may be open) must not unmount the picker — that would close the
+      // dropdown and silently drop the user's editor choice. Keep the picker
+      // up; the next pointermove without Alt clears everything as usual.
+      if (isInspectorUi(document.activeElement)) {
+        setShift(false)
+        clearTarget()
+        return
+      }
+      clearAll()
     }
 
-    const onBlur = () => clearAll()
+    // Same guard as onKeyUp: on some platforms opening the picker's native
+    // dropdown blurs the window, and tearing the picker down here would eat
+    // the selection.
+    const onBlur = () => {
+      if (isInspectorUi(document.activeElement)) return
+      clearAll()
+    }
 
     // Swallow the whole click gesture while inspecting so the app's own
     // handlers (including pointerdown-driven ones) never fire. The
@@ -289,7 +306,7 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
     }
   }, [projectRoot])
 
-  if (!mounted || process.env.NODE_ENV !== "development") return null
+  if (!mounted || !IS_DEV) return null
   return createPortal(
     <div data-inspector="">
       {inspecting && (
