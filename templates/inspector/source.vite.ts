@@ -291,6 +291,15 @@ export async function resolveSources(
 
 export type EditorOption = { id: string; label: string }
 
+/**
+ * Dev gate for the shared inspector files. `import.meta.env.DEV` is Vite's
+ * canonical flag; the cast keeps this file compiling in projects without
+ * `vite/client` types (including this repo's own Next.js demo app).
+ */
+export const IS_DEV = Boolean(
+  (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV
+)
+
 export const FALLBACK_EDITORS: EditorOption[] = [
   { id: "vscode", label: "VS Code" },
   { id: "vscode-insiders", label: "VS Code Insiders" },
@@ -314,6 +323,8 @@ export async function detectEditors(): Promise<EditorOption[]> {
  * project-relative file). "auto" — or a missing projectRoot — instead hits
  * Vite's built-in `/__open-in-editor`, which resolves the path server-side.
  */
+let warnedMissingRoot = false
+
 export function openInEditor(
   loc: SourceLocation,
   projectRoot: string,
@@ -324,6 +335,20 @@ export function openInEditor(
   // Absolute paths are used as-is; only project-relative paths get root prefixed.
   const abs = isAbsolute ? loc.file : root ? `${root}/${loc.file}` : null
   if (editor === "auto" || !abs) {
+    // The dev server's launch-editor picks the editor itself (running
+    // processes, $EDITOR) — it can't honor the picker. Falling back to it
+    // silently when a concrete editor is selected looks like the picker is
+    // broken ("I chose Insiders, it opened VS Code"), so say why once.
+    if (editor !== "auto" && !warnedMissingRoot) {
+      warnedMissingRoot = true
+      console.warn(
+        `[open-in-code-editor] "${editor}" is selected, but the project root ` +
+          "is unknown (VITE_INSPECTOR_ROOT is not set), so the dev server's " +
+          "own editor detection decides which editor opens. Run `npx " +
+          "open-in-code-editor` to write it to .env.local, then restart the " +
+          "dev server."
+      )
+    }
     const target = `${abs ?? loc.file}:${loc.line1}:${loc.column1}`
     void fetch(`/__open-in-editor?file=${encodeURIComponent(target)}`)
     return
