@@ -329,17 +329,20 @@ export function openInEditor(
   loc: SourceLocation,
   projectRoot: string,
   editor: string
-): void {
+): string | null {
   const root = projectRoot ? projectRoot.replace(/\/+$/, "") : ""
   const isAbsolute = loc.file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(loc.file)
   // Absolute paths are used as-is; only project-relative paths get root prefixed.
   const abs = isAbsolute ? loc.file : root ? `${root}/${loc.file}` : null
+  // A concrete editor was picked but there's no absolute path to feed its URL
+  // scheme — Vite can't hand the browser the project root unless
+  // VITE_INSPECTOR_ROOT is set. This is the usual "nothing opens on click":
+  // the pick can't be honored, so we fall back to the dev server's own
+  // detection and return a message the caller shows in the overlay (a console
+  // warning alone goes unseen).
+  const missingRoot = editor !== "auto" && !abs
   if (editor === "auto" || !abs) {
-    // The dev server's launch-editor picks the editor itself (running
-    // processes, $EDITOR) — it can't honor the picker. Falling back to it
-    // silently when a concrete editor is selected looks like the picker is
-    // broken ("I chose Insiders, it opened VS Code"), so say why once.
-    if (editor !== "auto" && !warnedMissingRoot) {
+    if (missingRoot && !warnedMissingRoot) {
       warnedMissingRoot = true
       console.warn(
         `[open-in-code-editor] "${editor}" is selected, but the project root ` +
@@ -351,7 +354,12 @@ export function openInEditor(
     }
     const target = `${abs ?? loc.file}:${loc.line1}:${loc.column1}`
     void fetch(`/__open-in-editor?file=${encodeURIComponent(target)}`)
-    return
+    return missingRoot
+      ? `Can't open "${editor}": VITE_INSPECTOR_ROOT isn't set, so the dev ` +
+          "server picked the editor. Run `npx open-in-code-editor` and restart " +
+          "the dev server."
+      : null
   }
   window.location.href = `${editor}://file${abs}:${loc.line1}:${loc.column1}`
+  return null
 }
