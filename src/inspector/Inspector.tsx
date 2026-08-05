@@ -45,7 +45,7 @@ import {
   type EditorOption,
   type SourceLocation,
 } from "./source"
-import { EditorSelect, InspectorOverlay, type TargetInfo } from "./ui"
+import { EditorSelect, InspectorNotice, InspectorOverlay, type TargetInfo } from "./ui"
 
 const EDITOR_STORAGE_KEY = "inspector.editor"
 
@@ -94,6 +94,7 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
         localStorage.getItem(EDITOR_STORAGE_KEY)) ||
       "vscode"
   )
+  const [notice, setNotice] = useState<string | null>(null)
 
   const targetElRef = useRef<Element | null>(null)
   const targetLocsRef = useRef<SourceLocation[] | null>(null)
@@ -102,6 +103,7 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
   const lastPointer = useRef({ x: 0, y: 0 })
   const editorRef = useRef(editor)
   const detectStartedRef = useRef(false)
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const changeEditor = (id: string) => {
     setEditor(id)
@@ -275,7 +277,13 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
       const shift = e.shiftKey
       resolveElement(el, projectRoot).then((locs) => {
         const loc = pickLocation(locs, shift)
-        if (loc) openInEditor(loc, projectRoot, editorRef.current)
+        if (!loc) return
+        const warning = openInEditor(loc, projectRoot, editorRef.current)
+        if (warning) {
+          setNotice(warning)
+          if (noticeTimer.current) clearTimeout(noticeTimer.current)
+          noticeTimer.current = setTimeout(() => setNotice(null), 6000)
+        }
       })
     }
 
@@ -303,6 +311,7 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
       window.removeEventListener("mouseup", swallow, opts)
       window.removeEventListener("click", swallow, opts)
       window.removeEventListener("pointerup", onPointerUp, opts)
+      if (noticeTimer.current) clearTimeout(noticeTimer.current)
     }
   }, [projectRoot])
 
@@ -313,6 +322,7 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
         <EditorSelect editors={editors} value={editor} onChange={changeEditor} />
       )}
       <InspectorOverlay target={target} />
+      {notice && <InspectorNotice message={notice} />}
     </div>,
     document.body
   )

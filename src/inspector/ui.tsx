@@ -172,3 +172,43 @@ export function InspectorOverlay({ target }: { target: TargetInfo | null }) {
     </div>
   )
 }
+
+/**
+ * Transient toast, bottom-center. Shown when a click resolved a location but
+ * the chosen editor couldn't be opened (e.g. the Vite project root is unknown,
+ * so the picker choice can't be honored). Console warnings go unseen; this
+ * surfaces the reason where the user is already looking.
+ */
+export function InspectorNotice({ message }: { message: string }) {
+  return (
+    <div
+      data-inspector=""
+      style={{
+        position: "fixed",
+        bottom: 12,
+        left: 0,
+        right: 0,
+        zIndex: 2147483647,
+        pointerEvents: "none",
+        display: "flex",
+        justifyContent: "center",
+        fontFamily: FONT,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "min(90vw, 460px)",
+          padding: "8px 12px",
+          background: "#b91c1c",
+          color: "#fff",
+          fontSize: 12,
+          lineHeight: 1.4,
+          borderRadius: 6,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+        }}
+      >
+        {message}
+      </div>
+    </div>
+  )
+}

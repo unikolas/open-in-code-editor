@@ -196,7 +196,10 @@ export function openInEditor(
   loc: SourceLocation,
   projectRoot: string,
   editor: string
-): void {
+): string | null {
+  // Next always has a real projectRoot (process.cwd() from the server render),
+  // so there's no missing-root case to report — return null to match the Vite
+  // resolver's signature (the shared Inspector surfaces any returned message).
   if (editor === "auto") {
     const params = new URLSearchParams({
       file: loc.file,
@@ -204,8 +207,9 @@ export function openInEditor(
       column1: String(loc.column1),
     })
     void fetch(`/__nextjs_launch-editor?${params}`)
-    return
+    return null
   }
   const abs = loc.file.startsWith("/") ? loc.file : `${projectRoot}/${loc.file}`
   window.location.href = `${editor}://file${abs}:${loc.line1}:${loc.column1}`
+  return null
 }
