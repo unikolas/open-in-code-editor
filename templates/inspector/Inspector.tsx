@@ -279,11 +279,11 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
         const loc = pickLocation(locs, shift)
         if (!loc) return
         const warning = openInEditor(loc, projectRoot, editorRef.current)
-        if (warning) {
-          setNotice(warning)
-          if (noticeTimer.current) clearTimeout(noticeTimer.current)
-          noticeTimer.current = setTimeout(() => setNotice(null), 6000)
-        }
+        // Reflect the latest attempt: a successful open (null) also clears any
+        // lingering notice from an earlier failed click.
+        setNotice(warning)
+        if (noticeTimer.current) clearTimeout(noticeTimer.current)
+        if (warning) noticeTimer.current = setTimeout(() => setNotice(null), 6000)
       })
     }
 
