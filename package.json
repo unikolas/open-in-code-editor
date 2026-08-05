@@ -15,6 +15,7 @@
     "url": "git+https://github.com/unikolas/open-in-code-editor.git"
   },
   "license": "MIT",
+  "packageManager": "pnpm@10.30.0+sha512.2b5753de015d480eeb88f5b5b61e0051f05b4301808a82ec8b840c9d2adf7748eb352c83f5c1593ca703ff1017295bc3fdd3119abb9686efc96b9fcb18200937",
   "bin": {
     "open-in-code-editor": "bin/cli.mjs"
   },
@@ -44,7 +45,6 @@
     "clsx": "^2.1.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.11",
-    "lucide-react": "^1.23.0",
     "next": "16.2.11",
     "react": "19.2.4",
     "react-dom": "19.2.4",

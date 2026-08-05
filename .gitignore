@@ -2,6 +2,9 @@
 
 # dependencies
 /node_modules
+# this is a pnpm repo — pnpm-lock.yaml is the only lockfile
+package-lock.json
+yarn.lock
 /.pnp
 .pnp.*
 .yarn/*
