@@ -28,7 +28,7 @@ for (const file of ["Inspector.tsx", "fiber.ts", "ui.tsx"]) {
 copyFileSync(join(inspectorSrc, "source.ts"), join(inspectorOut, "source.next.ts"))
 copyFileSync(join(inspectorSrc, "source.vite.ts"), join(inspectorOut, "source.vite.ts"))
 
-// Vite-only dev-server plugin (reports the project root + installed editors).
+// Vite-only dev-server plugin (reports the project root and base).
 // The CLI copies it in for Vite projects and registers it in vite.config.
 copyFileSync(join(inspectorSrc, "vite-plugin.ts"), join(inspectorOut, "vite-plugin.ts"))
 

@@ -20,6 +20,10 @@
  */
 
 import type { DebugSource } from "./fiber"
+// The endpoint the dev-server plugin serves. Imported rather than duplicated so
+// the two sides can't drift; the plugin module has no Node imports, so pulling
+// it into the browser graph costs one string constant.
+import { INSPECTOR_ENDPOINT } from "./vite-plugin"
 
 export type SourceLocation = {
   file: string
@@ -72,7 +76,9 @@ function acceptFrameFile(file: string): string | null {
   }
   if (typeof location !== "undefined" && url.origin !== location.origin) return null
   if (url.pathname.includes("/node_modules/")) return null
-  if (url.pathname.startsWith("/@vite") || url.pathname.startsWith("/@react-refresh")) return null
+  // Not anchored at "/": under a non-default `base` these live at
+  // `/app/@vite/client`, not `/@vite/client`.
+  if (/\/@(vite|react-refresh)/.test(url.pathname)) return null
   return file
 }
 
@@ -313,34 +319,6 @@ export const FALLBACK_EDITORS: EditorOption[] = [
   { id: "auto", label: "Auto (dev server)" },
 ]
 
-// Served by inspector/vite-plugin.ts. Inlined rather than imported: that module
-// reads node:fs, so it must never be pulled into the browser bundle.
-const INSPECTOR_ENDPOINT = "/__open-in-code-editor"
-
-let projectRootPromise: Promise<string> | null = null
-
-/**
- * Ask the dev server where the project lives. An empty string means the Vite
- * plugin isn't registered — the inspector then falls back to
- * `VITE_INSPECTOR_ROOT` and, failing that, to Vite's own `/__open-in-editor`.
- * Fetched once per page load and cached, including the failure.
- */
-function fetchProjectRoot(): Promise<string> {
-  if (!projectRootPromise) {
-    projectRootPromise = (async () => {
-      try {
-        const res = await fetch(INSPECTOR_ENDPOINT)
-        if (!res.ok) return ""
-        const body = (await res.json()) as { root?: unknown }
-        return typeof body.root === "string" ? body.root : ""
-      } catch {
-        return ""
-      }
-    })()
-  }
-  return projectRootPromise
-}
-
 /**
  * Vite has no install-aware editor route, so the picker always shows the static
  * list. (Detecting installed apps needs `node:fs`, which the plugin can't touch
@@ -348,6 +326,59 @@ function fetchProjectRoot(): Promise<string> {
  */
 export async function detectEditors(): Promise<EditorOption[]> {
   return FALLBACK_EDITORS
+}
+
+type ServerInfo = { root: string; base: string }
+
+/**
+ * Vite inlines the configured base here, so a resolved path can be
+ * de-prefixed even when the plugin isn't registered to report it.
+ */
+const ENV_BASE =
+  (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL || "/"
+
+const NO_SERVER_INFO: ServerInfo = { root: "", base: ENV_BASE }
+
+let serverInfo: Promise<ServerInfo> | null = null
+
+/**
+ * Ask the dev server where the project lives. An empty root means the Vite
+ * plugin isn't registered — the inspector then falls back to
+ * `VITE_INSPECTOR_ROOT` and, failing that, to Vite's own `/__open-in-editor`.
+ * Successes are cached for the page's lifetime; failures aren't, so a click that
+ * lands while the server is restarting (which registering the plugin itself
+ * causes) doesn't pin the tab to the fallback until a manual reload.
+ */
+async function fetchServerInfo(): Promise<ServerInfo> {
+  if (!serverInfo) {
+    serverInfo = (async () => {
+      try {
+        const res = await fetch(INSPECTOR_ENDPOINT)
+        if (!res.ok) return NO_SERVER_INFO
+        const body = (await res.json()) as { root?: unknown; base?: unknown }
+        if (typeof body.root !== "string" || !body.root) return NO_SERVER_INFO
+        return {
+          root: body.root,
+          base: typeof body.base === "string" && body.base ? body.base : ENV_BASE,
+        }
+      } catch {
+        return NO_SERVER_INFO
+      }
+    })()
+  }
+  const info = await serverInfo
+  if (!info.root) serverInfo = null
+  return info
+}
+
+/**
+ * Resolved paths are derived from module URL *pathnames*, so under a non-default
+ * `base` they carry that prefix (`base: "/app/"` -> `app/src/Card.tsx`) while
+ * the project root does not. Strip it before joining the two.
+ */
+function stripBase(file: string, base: string): string {
+  const prefix = base.replace(/^\/+/, "").replace(/\/*$/, "/")
+  return prefix !== "/" && file.startsWith(prefix) ? file.slice(prefix.length) : file
 }
 
 /**
@@ -376,11 +407,18 @@ export async function openInEditor(
   const isAbsolute = loc.file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(loc.file)
   const envRoot = projectRoot ? projectRoot.replace(/\/+$/, "") : ""
   let root = envRoot
+  let file = loc.file
+  let authoritative = false
 
   // Only pay for the round trip when a root is actually needed.
-  if (!isAbsolute && editor !== "auto") {
-    const pluginRoot = (await fetchProjectRoot()).replace(/\/+$/, "")
-    if (pluginRoot) root = pluginRoot
+  if (!isAbsolute) {
+    const info = await fetchServerInfo()
+    const pluginRoot = info.root.replace(/\/+$/, "")
+    file = stripBase(file, info.base)
+    if (pluginRoot) {
+      root = pluginRoot
+      authoritative = true
+    }
     if (envRoot && pluginRoot && envRoot !== pluginRoot && !warnedRootMismatch) {
       warnedRootMismatch = true
       console.warn(
@@ -392,7 +430,7 @@ export async function openInEditor(
   }
 
   // Absolute paths are used as-is; only project-relative paths get root prefixed.
-  const abs = isAbsolute ? loc.file : root ? `${root}/${loc.file}` : null
+  const abs = isAbsolute ? file : root ? `${root}/${file}` : null
   // A concrete editor was picked but there's no absolute path to feed its URL
   // scheme — neither the plugin nor VITE_INSPECTOR_ROOT told us the project
   // root. This is the usual "nothing opens on click" / "wrong editor opens":
@@ -411,7 +449,10 @@ export async function openInEditor(
           "reports the root."
       )
     }
-    const target = `${abs ?? loc.file}:${loc.line1}:${loc.column1}`
+    // Only hand over an absolute path we trust. An unverified `VITE_INSPECTOR_ROOT`
+    // may point at a moved project, and Vite resolves a relative path against
+    // its own root anyway — strictly better than a confidently wrong one.
+    const target = `${authoritative && abs ? abs : file}:${loc.line1}:${loc.column1}`
     void fetch(`/__open-in-editor?file=${encodeURIComponent(target)}`)
     return missingRoot
       ? `Can't open "${editor}": the inspector doesn't know your project path, ` +

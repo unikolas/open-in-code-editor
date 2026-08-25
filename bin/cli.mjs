@@ -53,7 +53,10 @@ function findNextLayout() {
 // Vite: a vite config plus a client entry module. Prefer the entry declared in
 // index.html; fall back to the conventional src/main.{tsx,jsx}.
 function findViteEntry() {
-  const configFile = ["ts", "js", "mts", "mjs", "cts", "cjs"]
+  // Same order as Vite's own DEFAULT_CONFIG_FILES: with more than one config
+  // present (a half-finished JS->TS migration, say) we must patch the file Vite
+  // actually loads.
+  const configFile = ["js", "mjs", "ts", "cjs", "mts", "cts"]
     .map((ext) => join(cwd, `vite.config.${ext}`))
     .find((f) => existsSync(f))
   if (!configFile) return null
@@ -203,10 +206,6 @@ function wireNext() {
 // --- 3b. Vite: wire main.tsx + register the plugin in vite.config ---------
 
 function wireVite() {
-  // Wire the config first: whether the plugin is in place decides how the mount
-  // gets the project root. With the plugin the browser asks the dev server for
-  // it; without it we fall back to the older .env.local mechanism (machine-
-  // specific, gitignored, needs a restart) and the mount has to pass it in.
   const wired = wireViteConfig()
 
   const entry = viteApp.entry
@@ -219,9 +218,12 @@ function wireVite() {
     const importLines =
       `import { createRoot as __inspectorRoot } from "react-dom/client"\n` +
       `import { Inspector as __Inspector } from "${importPath}"\n`
-    const element = wired
-      ? "<__Inspector />"
-      : "<__Inspector projectRoot={import.meta.env.VITE_INSPECTOR_ROOT} />"
+    // The mount always passes VITE_INSPECTOR_ROOT, even when the plugin is
+    // registered: the plugin's root wins at runtime, so the env var costs
+    // nothing, and it's the safety net if the vite.config patch turns out to be
+    // wrong (a config layout we mis-read, a config Vite doesn't load) — that
+    // degrades to the pre-plugin behaviour instead of no editor at all.
+    const element = "<__Inspector projectRoot={import.meta.env.VITE_INSPECTOR_ROOT} />"
     const mount =
       "\n// open-in-code-editor: dev-only click-to-source inspector.\n" +
       "if (import.meta.env.DEV) {\n" +
@@ -245,14 +247,28 @@ function wireVite() {
     }
   }
 
-  if (wired) {
+  writeEnvLocal()
+  ensureGitignore()
+
+  // A pre-0.5.0 inspector/ that a plain re-run left in place doesn't know about
+  // the endpoint, so the plugin alone wouldn't help it — .env.local (above) is
+  // what keeps it working, and `update` is what upgrades it.
+  const resolver = join(inspectorDir, "source.ts")
+  const staleResolver =
+    existsSync(resolver) && !readFileSync(resolver, "utf8").includes("__open-in-code-editor")
+  if (staleResolver) {
+    log(
+      "• inspector/source.ts predates the dev-server plugin — run " +
+        "`npx open-in-code-editor@latest update` to use it.",
+    )
+  }
+
+  if (wired && !staleResolver) {
     log(
       "\nDone. Vite reloads its config on its own — hold ⌥ Option and click " +
         "any element.",
     )
   } else {
-    writeEnvLocal()
-    ensureGitignore()
     log(
       "\nDone. Restart your dev server (to load .env.local), then hold ⌥ Option " +
         "and click any element.",
@@ -264,15 +280,83 @@ function wireVite() {
 // Neither form is universally right: TypeScript's `nodenext` resolution (the
 // current Vite templates) *requires* the extension and Vite 8's native config
 // loader warns without it, while `bundler` resolution rejects it unless
-// `allowImportingTsExtensions` is set. So: use the extension unless a tsconfig
-// exists that hasn't enabled the flag.
+// `allowImportingTsExtensions` is set.
 function tsImportExtension() {
-  const configs = readdirSync(cwd).filter((f) => /^tsconfig.*\.json$/.test(f))
+  const configs = readdirSync(cwd)
+    .filter((f) => /^tsconfig.*\.json$/.test(f))
+    .map((f) => readFileSync(join(cwd, f), "utf8"))
   if (configs.length === 0) return ".ts"
-  const allowed = configs.some((f) =>
-    /"allowImportingTsExtensions"\s*:\s*true/.test(readFileSync(join(cwd, f), "utf8")),
-  )
-  return allowed ? ".ts" : ""
+  // create-vite splits the app and node projects, and only the node one governs
+  // vite.config — a flag set in the app project says nothing about ours.
+  const governing = configs.filter((c) => c.includes("vite.config"))
+  const relevant = governing.length ? governing : configs
+  if (relevant.every((c) => /"allowImportingTsExtensions"\s*:\s*true/.test(c))) return ".ts"
+  // Without the flag the extension is a hard error (TS5097) — but under
+  // node16/nodenext resolution so is the bare specifier (TS2835). Prefer the
+  // extension there and let TypeScript ask for the one-line flag.
+  return relevant.some((c) => /"(?:module|moduleResolution)"\s*:\s*"node(?:next|16)"/i.test(c))
+    ? ".ts"
+    : ""
+}
+
+// Blank out comments and string bodies while preserving every offset, so a
+// match in the mask points at the same place in the real source. Without this,
+// `plugins: [` inside a comment or a string reads as real config.
+function maskNonCode(src) {
+  const out = src.split("")
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " "
+  }
+  let i = 0
+  while (i < src.length) {
+    const ch = src[i]
+    const next = src[i + 1]
+    if (ch === "/" && next === "/") {
+      let j = src.indexOf("\n", i)
+      if (j === -1) j = src.length
+      blank(i, j)
+      i = j
+    } else if (ch === "/" && next === "*") {
+      const end = src.indexOf("*/", i + 2)
+      const j = end === -1 ? src.length : end + 2
+      blank(i, j)
+      i = j
+    } else if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1
+      while (j < src.length) {
+        if (src[j] === "\\") j += 2
+        else if (src[j] === ch) {
+          j++
+          break
+        } else j++
+      }
+      blank(i, j)
+      i = j
+    } else i++
+  }
+  return out.join("")
+}
+
+// Offset just past the `[` of the config's *own* plugins array, or -1.
+// `plugins:` is a key in several unrelated places — css.postcss.plugins,
+// build.rollupOptions.plugins, optimizeDeps.esbuildOptions.plugins — and
+// inserting a Vite plugin into one of those breaks the build. The config's own
+// list is the one nested exactly one level deep (`defineConfig({…})`,
+// `export default {…}`, or a function returning either).
+function findConfigPluginsArray(src) {
+  const masked = maskNonCode(src)
+  const re = /plugins\s*:\s*\[/g
+  let m
+  while ((m = re.exec(masked)) !== null) {
+    let depth = 0
+    for (let i = 0; i < m.index; i++) {
+      const c = masked[i]
+      if (c === "{" || c === "[") depth++
+      else if (c === "}" || c === "]") depth--
+    }
+    if (depth === 1) return m.index + m[0].length
+  }
+  return -1
 }
 
 // Register inspector/vite-plugin.ts in vite.config.* so the dev server can tell
@@ -280,19 +364,17 @@ function tsImportExtension() {
 // when the config is wired — already or by us. Idempotent: keyed on the import.
 function wireViteConfig() {
   const configFile = viteApp.configFile
-  const pluginPath = importPathFrom(configFile, "vite-plugin") + tsImportExtension()
-  const importLine = `import { inspectorPlugin } from "${pluginPath}"\n`
-
   let src = readFileSync(configFile, "utf8")
   if (/inspector\/vite-plugin/.test(src)) {
     log("• vite.config already registers the inspector plugin — leaving it as is.")
     return true
   }
 
+  const pluginPath = importPathFrom(configFile, "vite-plugin") + tsImportExtension()
+  const importLine = `import { inspectorPlugin } from "${pluginPath}"\n`
   const lastImport = [...src.matchAll(/^import[^\n]*\n/gm)].pop()
-  // The first `plugins: [` is the config's own in every layout we can safely
-  // patch (object literal or a function returning one).
-  if (!lastImport || !/plugins\s*:\s*\[/.test(src)) {
+  const at = findConfigPluginsArray(src)
+  if (!lastImport || at === -1) {
     log(
       "! Could not auto-edit " + relative(cwd, configFile) + " — add manually:\n" +
         `    ${importLine.trim()}\n` +
@@ -301,22 +383,23 @@ function wireViteConfig() {
     return false
   }
 
-  const insertAt = lastImport.index + lastImport[0].length
-  src = src.slice(0, insertAt) + importLine + src.slice(insertAt)
-  const plugins = src.match(/plugins\s*:\s*\[/)
-  const at = plugins.index + plugins[0].length
+  // Patch the array before the import so `at` stays valid (imports come first).
   // No trailing comma when the array was empty, so `plugins: [inspectorPlugin()]`
   // stays clean.
   const insertion = /^\s*\]/.test(src.slice(at)) ? "inspectorPlugin()" : "inspectorPlugin(), "
   src = src.slice(0, at) + insertion + src.slice(at)
+  const insertAt = lastImport.index + lastImport[0].length
+  src = src.slice(0, insertAt) + importLine + src.slice(insertAt)
   writeFileSync(configFile, src)
   log(`✓ Registered the inspector plugin in ${relative(cwd, configFile)}`)
   return true
 }
 
-// Fallback for projects whose vite.config we couldn't patch: bake the absolute
-// project root into a gitignored .env.local instead. Vite has no server render
-// to hand us process.cwd(), and editor deeplinks need an absolute path.
+// Bake the absolute project root into a gitignored .env.local. The plugin is
+// the primary source (and wins at runtime), but Vite has no server render to
+// hand us process.cwd(), so this stays as the safety net for configs we patched
+// wrongly, configs we couldn't patch, and inspector/ copies older than the
+// plugin.
 function writeEnvLocal() {
   const envFile = join(cwd, ".env.local")
   const line = `VITE_INSPECTOR_ROOT=${cwd}`

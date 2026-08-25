@@ -50,9 +50,11 @@ alias required) and wires your entry file for you:
   `vite.config.*`. Editor deeplinks need an absolute path, and the plugin is how
   the dev server hands the browser your project root. Vite reloads its own
   config, so there's nothing to restart — just hold <kbd>⌥</kbd>, hover, and
-  click. (If your config can't be patched automatically, the installer prints
-  the two lines to add and falls back to writing `VITE_INSPECTOR_ROOT` into a
-  gitignored `.env.local`, which needs a dev-server restart.)
+  click. It also writes `VITE_INSPECTOR_ROOT` into a gitignored `.env.local` as
+  a safety net (the plugin's value wins when both are present). If your config
+  is laid out in a way the installer won't touch, it says so and prints the two
+  lines to add — then the `.env.local` path carries you, after a dev-server
+  restart.
 
 The command is idempotent — it skips files that already exist and never edits
 your entry file twice.
@@ -90,6 +92,7 @@ your-app/
   vite.config.ts      # + import and inspectorPlugin() in plugins
   src/main.tsx        # + a dev-only <Inspector/> mount
   src/inspector/      # Inspector.tsx, fiber.ts, source.ts, ui.tsx, vite-plugin.ts
+  .env.local          # + VITE_INSPECTOR_ROOT (gitignored; fallback project root)
 ```
 
 **Requirements:** React 19 in dev mode, plus either a Next.js 16 dev server
