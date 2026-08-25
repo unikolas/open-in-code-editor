@@ -16,9 +16,11 @@ label shows the component name, line, and source file — then
   on Vite (React 19)
 - Opens VS Code, VS Code Insiders, Cursor, Windsurf, or Zed via their URL
   schemes — pick one in the floating selector shown while inspecting
-- Zero build config: it reads the source maps your dev server already
+- No build config: it reads the source maps your dev server already
   produces — Next.js's stack-frame endpoint, or the inline sourcemaps Vite
-  serves with every module — and renders nothing in production builds
+  serves with every module — and renders nothing in production builds (on Vite
+  the installer also registers a dev-only plugin, one line in `vite.config`, so
+  the dev server can tell the browser where your project lives on disk)
 
 ## Supported frameworks
 
@@ -44,10 +46,13 @@ alias required) and wires your entry file for you:
 
 - **Next.js** — wires `app/layout.tsx` to render `<Inspector/>` inside `<body>`.
   Start your dev server, hold <kbd>⌥</kbd>, hover, and click.
-- **Vite** — wires `src/main.tsx`, and writes a gitignored `.env.local` with
-  your project root so editor deeplinks resolve to absolute paths.
-  **Restart the dev server** afterward so Vite loads `.env.local`, then hold
-  <kbd>⌥</kbd>, hover, and click.
+- **Vite** — wires `src/main.tsx` and registers a dev-only plugin in
+  `vite.config.*`. Editor deeplinks need an absolute path, and the plugin is how
+  the dev server hands the browser your project root. Vite reloads its own
+  config, so there's nothing to restart — just hold <kbd>⌥</kbd>, hover, and
+  click. (If your config can't be patched automatically, the installer prints
+  the two lines to add and falls back to writing `VITE_INSPECTOR_ROOT` into a
+  gitignored `.env.local`, which needs a dev-server restart.)
 
 The command is idempotent — it skips files that already exist and never edits
 your entry file twice.
@@ -82,9 +87,9 @@ your-app/
 
 ```
 your-app/
+  vite.config.ts      # + import and inspectorPlugin() in plugins
   src/main.tsx        # + a dev-only <Inspector/> mount
-  src/inspector/      # Inspector.tsx, fiber.ts, source.ts, ui.tsx
-  .env.local          # + VITE_INSPECTOR_ROOT (gitignored; project root for deeplinks)
+  src/inspector/      # Inspector.tsx, fiber.ts, source.ts, ui.tsx, vite-plugin.ts
 ```
 
 **Requirements:** React 19 in dev mode, plus either a Next.js 16 dev server
@@ -109,8 +114,15 @@ import path to where you placed the folder):
   The API route is optional — without it a static editor list is shown instead
   of only the editors installed on your machine.
 
-- **Vite** — in `src/main.tsx`, plus `VITE_INSPECTOR_ROOT=<abs project root>`
-  in a (gitignored) `.env.local`:
+- **Vite** — register the plugin in `vite.config.ts` (drop the `.ts` extension
+  if your tsconfig doesn't set `allowImportingTsExtensions`):
+
+  ```ts
+  import { inspectorPlugin } from "./src/inspector/vite-plugin.ts"
+  export default defineConfig({ plugins: [inspectorPlugin(), react()] })
+  ```
+
+  and mount it in `src/main.tsx`:
 
   ```tsx
   import { createRoot } from "react-dom/client"
@@ -118,11 +130,13 @@ import path to where you placed the folder):
   if (import.meta.env.DEV) {
     const el = document.createElement("div")
     document.body.appendChild(el)
-    createRoot(el).render(
-      <Inspector projectRoot={import.meta.env.VITE_INSPECTOR_ROOT} />,
-    )
+    createRoot(el).render(<Inspector />)
   }
   ```
+
+  Without the plugin, pass the project root in yourself —
+  `VITE_INSPECTOR_ROOT=<abs project root>` in a (gitignored) `.env.local`, read
+  as `<Inspector projectRoot={import.meta.env.VITE_INSPECTOR_ROOT} />`.
 
 ## Try the demo
 
@@ -142,13 +156,26 @@ localStorage. The **Auto** option defers to the dev server's own editor
 detection instead of a URL scheme — Next.js's launch-editor
 (`REACT_EDITOR`/`EDITOR`), or Vite's built-in `/__open-in-editor`
 (`LAUNCH_EDITOR`/`EDITOR`). On Vite the picker always shows the full editor
-list (there's no install-detection route); if `VITE_INSPECTOR_ROOT` isn't
-loaded, every editor choice falls back to Vite's `/__open-in-editor` — which
-picks the editor itself, so your selection can't be honored and the inspector
-logs a console warning saying so. That happens when the dev server wasn't
-restarted after install, and for teammates who pulled the wired entry file
-but don't have the (gitignored) `.env.local` — fix either by running
-`npx open-in-code-editor` and restarting the dev server.
+list; on Next.js the optional API route narrows it to editors actually
+installed.
+
+### Troubleshooting
+
+**"Could not open … in the editor. spawn code ENOENT"** in your dev server log,
+or a red toast saying the inspector doesn't know your project path — the
+inspector couldn't build an absolute path, so it handed the click to the dev
+server, which guessed at an editor and tried the `code` command you don't have
+in `PATH`. On Vite that means the plugin isn't registered (an install from
+before it existed, or a `vite.config` the installer couldn't patch):
+
+```bash
+npx open-in-code-editor@latest update
+```
+
+Then check `vite.config.*` contains `inspectorPlugin()` and that
+`curl localhost:5173/__open-in-code-editor` returns your project root. A stale
+`VITE_INSPECTOR_ROOT` in `.env.local` is ignored once the plugin is in place
+(the inspector logs a warning naming both paths so you can delete the line).
 
 ## How it works
 
@@ -165,8 +192,11 @@ call site in compiled code — then maps those frames back to your `src/` files:
   vendored VLQ reader) — no plugin, no config.
 
 Opening the editor is a plain `vscode://file/<path>:<line>:<column>`-style
-deeplink fired from the browser (the Vite build gets the absolute path from
-`VITE_INSPECTOR_ROOT`).
+deeplink fired from the browser — no editor CLI on your `PATH` required. On
+Vite the absolute path comes from the dev-only plugin's
+`GET /__open-in-code-editor`, which reports Vite's own `root`
+(`VITE_INSPECTOR_ROOT` still works as a fallback for installs predating the
+plugin).
 
 Because the whole owner chain resolves — innermost (the element's own
 definition) through outermost (where it's used on the page) — a plain click
@@ -176,15 +206,18 @@ opens the first and <kbd>⇧ Shift</kbd>+click opens the last.
 
 Delete the `inspector/` folder and remove the inspector import and mount from
 your entry file (`layout.tsx` or `main.tsx`). On Next.js also delete
-`app/api/inspector/route.ts`; on Vite also remove `VITE_INSPECTOR_ROOT` from
-`.env.local`.
+`app/api/inspector/route.ts`; on Vite also remove the `inspectorPlugin()` import
+and call from `vite.config.*` (and `VITE_INSPECTOR_ROOT` from `.env.local`, if
+an older install wrote one).
 
 ## Development
 
 `src/inspector/` is the single source of truth; `templates/` (what the
-installer ships) is generated from it — the shared files plus `source.next.ts`
-and `source.vite.ts`, which the CLI copies in as `source.ts`. After editing the
-inspector, run:
+installer ships) is generated from it — the shared files, `source.next.ts` and
+`source.vite.ts` (the CLI copies the right one in as `source.ts`), and the
+Vite-only `vite-plugin.ts`. That plugin file is deliberately free of Node
+built-ins and `vite` type imports: it lands in the consumer's `src/`, so it has
+to pass their app tsconfig too. After editing the inspector, run:
 
 ```bash
 pnpm sync-templates

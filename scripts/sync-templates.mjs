@@ -28,6 +28,10 @@ for (const file of ["Inspector.tsx", "fiber.ts", "ui.tsx"]) {
 copyFileSync(join(inspectorSrc, "source.ts"), join(inspectorOut, "source.next.ts"))
 copyFileSync(join(inspectorSrc, "source.vite.ts"), join(inspectorOut, "source.vite.ts"))
 
+// Vite-only dev-server plugin (reports the project root + installed editors).
+// The CLI copies it in for Vite projects and registers it in vite.config.
+copyFileSync(join(inspectorSrc, "vite-plugin.ts"), join(inspectorOut, "vite-plugin.ts"))
+
 // Optional Next.js API route -> templates/api/route.ts
 const routeOut = join(templates, "api")
 mkdirSync(routeOut, { recursive: true })
@@ -37,5 +41,5 @@ copyFileSync(
 )
 
 console.log(
-  "Synced templates/ (shared inspector + source.next/source.vite + API route).",
+  "Synced templates/ (shared inspector + source.next/source.vite + Vite plugin + API route).",
 )

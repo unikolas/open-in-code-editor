@@ -9,10 +9,14 @@
  * browser, and maps the compiled line/column back to your `src/` file.
  *
  * Opening still uses the chosen editor's URL scheme, which needs an absolute
- * path. Vite has no server render to hand us `process.cwd()`, so the installer
- * writes the project root into a gitignored `.env.local` and the mount passes
- * it in as `projectRoot` (see cli.mjs). When it's absent we fall back to Vite's
- * built-in `GET /__open-in-editor`, which resolves a root-relative path itself.
+ * path. Vite has no server render to hand us `process.cwd()`, so the project
+ * root comes from the dev-only plugin in `vite-plugin.ts` (`GET
+ * /__open-in-code-editor`), which the installer registers in vite.config. A
+ * `VITE_INSPECTOR_ROOT` env var passed in as `projectRoot` still works for
+ * installs predating the plugin, but the plugin wins when both are present: its
+ * value comes off the running server, so it can't go stale. With neither, we
+ * fall back to Vite's built-in `GET /__open-in-editor`, which resolves a
+ * root-relative path itself but chooses the editor on its own.
  */
 
 import type { DebugSource } from "./fiber"
@@ -309,55 +313,110 @@ export const FALLBACK_EDITORS: EditorOption[] = [
   { id: "auto", label: "Auto (dev server)" },
 ]
 
+// Served by inspector/vite-plugin.ts. Inlined rather than imported: that module
+// reads node:fs, so it must never be pulled into the browser bundle.
+const INSPECTOR_ENDPOINT = "/__open-in-code-editor"
+
+let projectRootPromise: Promise<string> | null = null
+
 /**
- * Vite has no install-aware editor route, so the picker always shows the
- * static list. (The "auto" option defers to Vite's own launch-editor.)
+ * Ask the dev server where the project lives. An empty string means the Vite
+ * plugin isn't registered — the inspector then falls back to
+ * `VITE_INSPECTOR_ROOT` and, failing that, to Vite's own `/__open-in-editor`.
+ * Fetched once per page load and cached, including the failure.
+ */
+function fetchProjectRoot(): Promise<string> {
+  if (!projectRootPromise) {
+    projectRootPromise = (async () => {
+      try {
+        const res = await fetch(INSPECTOR_ENDPOINT)
+        if (!res.ok) return ""
+        const body = (await res.json()) as { root?: unknown }
+        return typeof body.root === "string" ? body.root : ""
+      } catch {
+        return ""
+      }
+    })()
+  }
+  return projectRootPromise
+}
+
+/**
+ * Vite has no install-aware editor route, so the picker always shows the static
+ * list. (Detecting installed apps needs `node:fs`, which the plugin can't touch
+ * — it lives in the app's `src/` and would break the app's own typecheck.)
  */
 export async function detectEditors(): Promise<EditorOption[]> {
   return FALLBACK_EDITORS
 }
 
 /**
- * Open the location. A concrete editor id ("vscode", "cursor", …) launches
- * that editor's URL scheme with an absolute path (`projectRoot` + the
- * project-relative file). "auto" — or a missing projectRoot — instead hits
- * Vite's built-in `/__open-in-editor`, which resolves the path server-side.
+ * Open the location. A concrete editor id ("vscode", "cursor", …) launches that
+ * editor's URL scheme with an absolute path — which needs the project root:
+ *
+ *   1. the root reported by inspector/vite-plugin.ts — read off the running dev
+ *      server, so it can never be stale;
+ *   2. the `projectRoot` prop (`VITE_INSPECTOR_ROOT`), how installs predating
+ *      the plugin got the root;
+ *   3. neither: fall back to Vite's built-in `/__open-in-editor`, which resolves
+ *      the path server-side but picks the editor itself (LAUNCH_EDITOR/EDITOR,
+ *      else a guess that needs `code` on PATH), so the picker is ignored.
+ *
+ * "auto" always takes route 3 by request. Returns a message for the overlay when
+ * the click couldn't be honored as asked, else null.
  */
 let warnedMissingRoot = false
+let warnedRootMismatch = false
 
-export function openInEditor(
+export async function openInEditor(
   loc: SourceLocation,
   projectRoot: string,
   editor: string
-): string | null {
-  const root = projectRoot ? projectRoot.replace(/\/+$/, "") : ""
+): Promise<string | null> {
   const isAbsolute = loc.file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(loc.file)
+  const envRoot = projectRoot ? projectRoot.replace(/\/+$/, "") : ""
+  let root = envRoot
+
+  // Only pay for the round trip when a root is actually needed.
+  if (!isAbsolute && editor !== "auto") {
+    const pluginRoot = (await fetchProjectRoot()).replace(/\/+$/, "")
+    if (pluginRoot) root = pluginRoot
+    if (envRoot && pluginRoot && envRoot !== pluginRoot && !warnedRootMismatch) {
+      warnedRootMismatch = true
+      console.warn(
+        `[open-in-code-editor] VITE_INSPECTOR_ROOT (${envRoot}) disagrees with ` +
+          `the dev server's project root (${pluginRoot}); using the dev ` +
+          "server's. The .env.local line is stale — you can delete it."
+      )
+    }
+  }
+
   // Absolute paths are used as-is; only project-relative paths get root prefixed.
   const abs = isAbsolute ? loc.file : root ? `${root}/${loc.file}` : null
   // A concrete editor was picked but there's no absolute path to feed its URL
-  // scheme — Vite can't hand the browser the project root unless
-  // VITE_INSPECTOR_ROOT is set. This is the usual "nothing opens on click":
-  // the pick can't be honored, so we fall back to the dev server's own
-  // detection and return a message the caller shows in the overlay (a console
-  // warning alone goes unseen).
+  // scheme — neither the plugin nor VITE_INSPECTOR_ROOT told us the project
+  // root. This is the usual "nothing opens on click" / "wrong editor opens":
+  // the pick can't be honored, so we hand the click to the dev server and
+  // return a message the caller shows in the overlay (a console warning alone
+  // goes unseen).
   const missingRoot = editor !== "auto" && !abs
   if (editor === "auto" || !abs) {
     if (missingRoot && !warnedMissingRoot) {
       warnedMissingRoot = true
       console.warn(
-        `[open-in-code-editor] "${editor}" is selected, but the project root ` +
-          "is unknown (VITE_INSPECTOR_ROOT is not set), so the dev server's " +
-          "own editor detection decides which editor opens. Run `npx " +
-          "open-in-code-editor` to write it to .env.local, then restart the " +
-          "dev server."
+        `[open-in-code-editor] "${editor}" is selected, but the project root is ` +
+          "unknown, so the dev server's own editor detection decides which " +
+          "editor opens (and fails outright if `code` isn't on your PATH). Run " +
+          "`npx open-in-code-editor@latest update` to add the Vite plugin that " +
+          "reports the root."
       )
     }
     const target = `${abs ?? loc.file}:${loc.line1}:${loc.column1}`
     void fetch(`/__open-in-editor?file=${encodeURIComponent(target)}`)
     return missingRoot
-      ? `Can't open "${editor}": VITE_INSPECTOR_ROOT isn't set, so the dev ` +
-          "server picked the editor. Run `npx open-in-code-editor` and restart " +
-          "the dev server."
+      ? `Can't open "${editor}": the inspector doesn't know your project path, ` +
+          "so the dev server picked the editor. Run `npx " +
+          "open-in-code-editor@latest update` to add the Vite plugin."
       : null
   }
   window.location.href = `${editor}://file${abs}:${loc.line1}:${loc.column1}`

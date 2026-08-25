@@ -5,7 +5,9 @@
 //   npx open-in-code-editor --force    same as update (alias)
 // Detects a Next.js app-router or a Vite + React project, copies the inspector
 // in with a relative import (no `@/` alias required), and wires the entry file
-// (layout.tsx for Next, main.tsx for Vite). Idempotent and dependency-free.
+// (layout.tsx for Next, main.tsx for Vite). On Vite it also registers a dev-only
+// plugin in vite.config so the dev server can report the project root that
+// editor deeplinks need. Idempotent and dependency-free.
 // The entry wiring is never touched twice; `update`/`--force` only overwrites
 // the copied inspector files, so pin a version to upgrade:
 // `npx open-in-code-editor@latest update`.
@@ -51,10 +53,10 @@ function findNextLayout() {
 // Vite: a vite config plus a client entry module. Prefer the entry declared in
 // index.html; fall back to the conventional src/main.{tsx,jsx}.
 function findViteEntry() {
-  const hasConfig = ["ts", "js", "mts", "mjs", "cts", "cjs"].some((ext) =>
-    existsSync(join(cwd, `vite.config.${ext}`)),
-  )
-  if (!hasConfig) return null
+  const configFile = ["ts", "js", "mts", "mjs", "cts", "cjs"]
+    .map((ext) => join(cwd, `vite.config.${ext}`))
+    .find((f) => existsSync(f))
+  if (!configFile) return null
 
   const indexHtml = join(cwd, "index.html")
   if (existsSync(indexHtml)) {
@@ -65,14 +67,14 @@ function findViteEntry() {
     if (m) {
       const entry = join(cwd, m[1].replace(/^\//, ""))
       if (/\.[jt]sx$/.test(entry) && existsSync(entry)) {
-        return { base: dirname(entry), entry }
+        return { base: dirname(entry), entry, configFile }
       }
     }
   }
 
   for (const rel of ["src/main.tsx", "src/main.jsx", "main.tsx", "main.jsx"]) {
     const entry = join(cwd, rel)
-    if (existsSync(entry)) return { base: dirname(entry), entry }
+    if (existsSync(entry)) return { base: dirname(entry), entry, configFile }
   }
   return null
 }
@@ -102,11 +104,23 @@ if (inspectorExists && !force) {
     `• inspector/ already exists at ${relative(cwd, inspectorDir)} — ` +
       "re-run with `update` to refresh it. Skipping.",
   )
+  // The dev-server plugin arrived after the first Vite releases, so add it even
+  // on a plain re-run — without it editor deeplinks have no project root.
+  if (framework === "vite" && !existsSync(join(inspectorDir, "vite-plugin.ts"))) {
+    copyFileSync(
+      join(templates, "inspector", "vite-plugin.ts"),
+      join(inspectorDir, "vite-plugin.ts"),
+    )
+    log(`✓ Added ${relative(cwd, join(inspectorDir, "vite-plugin.ts"))} (new in this version)`)
+  }
 } else {
   mkdirSync(inspectorDir, { recursive: true })
   const resolver = framework === "next" ? "source.next.ts" : "source.vite.ts"
   for (const file of readdirSync(join(templates, "inspector"))) {
     if (file === "source.next.ts" || file === "source.vite.ts") continue
+    // The plugin is Vite's way of reporting the project root; Next.js gets that
+    // from its server render, so it has no use for the file.
+    if (file === "vite-plugin.ts" && framework !== "vite") continue
     const src = join(templates, "inspector", file)
     const dst = join(inspectorDir, file)
     if (framework === "vite" && file === "Inspector.tsx") {
@@ -122,9 +136,9 @@ if (inspectorExists && !force) {
   log(inspectorExists ? `✓ Updated inspector in ${dst}/` : `✓ Copied inspector into ${dst}/`)
 }
 
-// The relative import path from the entry file to inspector/Inspector.
-function importPathFrom(entryFile) {
-  let p = relative(dirname(entryFile), join(inspectorDir, "Inspector"))
+// The relative import path from a file to a module inside inspector/.
+function importPathFrom(entryFile, target = "Inspector") {
+  let p = relative(dirname(entryFile), join(inspectorDir, target))
   if (!p.startsWith(".")) p = `./${p}`
   return p.split("\\").join("/") // windows -> posix
 }
@@ -186,9 +200,15 @@ function wireNext() {
   log("\nDone. Start your dev server, then hold ⌥ Option and click any element.")
 }
 
-// --- 3b. Vite: wire main.tsx + write .env.local --------------------------
+// --- 3b. Vite: wire main.tsx + register the plugin in vite.config ---------
 
 function wireVite() {
+  // Wire the config first: whether the plugin is in place decides how the mount
+  // gets the project root. With the plugin the browser asks the dev server for
+  // it; without it we fall back to the older .env.local mechanism (machine-
+  // specific, gitignored, needs a restart) and the mount has to pass it in.
+  const wired = wireViteConfig()
+
   const entry = viteApp.entry
   const importPath = importPathFrom(entry)
 
@@ -199,14 +219,15 @@ function wireVite() {
     const importLines =
       `import { createRoot as __inspectorRoot } from "react-dom/client"\n` +
       `import { Inspector as __Inspector } from "${importPath}"\n`
+    const element = wired
+      ? "<__Inspector />"
+      : "<__Inspector projectRoot={import.meta.env.VITE_INSPECTOR_ROOT} />"
     const mount =
       "\n// open-in-code-editor: dev-only click-to-source inspector.\n" +
       "if (import.meta.env.DEV) {\n" +
       "  const el = document.createElement(\"div\")\n" +
       "  document.body.appendChild(el)\n" +
-      "  __inspectorRoot(el).render(\n" +
-      "    <__Inspector projectRoot={import.meta.env.VITE_INSPECTOR_ROOT} />,\n" +
-      "  )\n" +
+      `  __inspectorRoot(el).render(${element})\n` +
       "}\n"
     const lastImport = [...src.matchAll(/^import[^\n]*\n/gm)].pop()
     if (lastImport) {
@@ -224,17 +245,78 @@ function wireVite() {
     }
   }
 
-  writeEnvLocal()
-  ensureGitignore()
-
-  log(
-    "\nDone. Restart your dev server (to load .env.local), then hold ⌥ Option " +
-      "and click any element.",
-  )
+  if (wired) {
+    log(
+      "\nDone. Vite reloads its config on its own — hold ⌥ Option and click " +
+        "any element.",
+    )
+  } else {
+    writeEnvLocal()
+    ensureGitignore()
+    log(
+      "\nDone. Restart your dev server (to load .env.local), then hold ⌥ Option " +
+        "and click any element.",
+    )
+  }
 }
 
-// Absolute project root for editor deeplinks — Vite has no server render to
-// hand us process.cwd(), so bake it into a gitignored .env.local.
+// Whether to write the plugin import with an explicit `.ts` extension.
+// Neither form is universally right: TypeScript's `nodenext` resolution (the
+// current Vite templates) *requires* the extension and Vite 8's native config
+// loader warns without it, while `bundler` resolution rejects it unless
+// `allowImportingTsExtensions` is set. So: use the extension unless a tsconfig
+// exists that hasn't enabled the flag.
+function tsImportExtension() {
+  const configs = readdirSync(cwd).filter((f) => /^tsconfig.*\.json$/.test(f))
+  if (configs.length === 0) return ".ts"
+  const allowed = configs.some((f) =>
+    /"allowImportingTsExtensions"\s*:\s*true/.test(readFileSync(join(cwd, f), "utf8")),
+  )
+  return allowed ? ".ts" : ""
+}
+
+// Register inspector/vite-plugin.ts in vite.config.* so the dev server can tell
+// the browser the absolute project root (editor deeplinks need it). Returns true
+// when the config is wired — already or by us. Idempotent: keyed on the import.
+function wireViteConfig() {
+  const configFile = viteApp.configFile
+  const pluginPath = importPathFrom(configFile, "vite-plugin") + tsImportExtension()
+  const importLine = `import { inspectorPlugin } from "${pluginPath}"\n`
+
+  let src = readFileSync(configFile, "utf8")
+  if (/inspector\/vite-plugin/.test(src)) {
+    log("• vite.config already registers the inspector plugin — leaving it as is.")
+    return true
+  }
+
+  const lastImport = [...src.matchAll(/^import[^\n]*\n/gm)].pop()
+  // The first `plugins: [` is the config's own in every layout we can safely
+  // patch (object literal or a function returning one).
+  if (!lastImport || !/plugins\s*:\s*\[/.test(src)) {
+    log(
+      "! Could not auto-edit " + relative(cwd, configFile) + " — add manually:\n" +
+        `    ${importLine.trim()}\n` +
+        "    plugins: [inspectorPlugin(), /* your other plugins */]",
+    )
+    return false
+  }
+
+  const insertAt = lastImport.index + lastImport[0].length
+  src = src.slice(0, insertAt) + importLine + src.slice(insertAt)
+  const plugins = src.match(/plugins\s*:\s*\[/)
+  const at = plugins.index + plugins[0].length
+  // No trailing comma when the array was empty, so `plugins: [inspectorPlugin()]`
+  // stays clean.
+  const insertion = /^\s*\]/.test(src.slice(at)) ? "inspectorPlugin()" : "inspectorPlugin(), "
+  src = src.slice(0, at) + insertion + src.slice(at)
+  writeFileSync(configFile, src)
+  log(`✓ Registered the inspector plugin in ${relative(cwd, configFile)}`)
+  return true
+}
+
+// Fallback for projects whose vite.config we couldn't patch: bake the absolute
+// project root into a gitignored .env.local instead. Vite has no server render
+// to hand us process.cwd(), and editor deeplinks need an absolute path.
 function writeEnvLocal() {
   const envFile = join(cwd, ".env.local")
   const line = `VITE_INSPECTOR_ROOT=${cwd}`
