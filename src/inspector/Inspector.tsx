@@ -83,7 +83,10 @@ const useMounted = () =>
     () => false
   )
 
-export function Inspector({ projectRoot }: { projectRoot: string }) {
+// projectRoot is optional: Next passes process.cwd(), while on Vite the root
+// normally comes from the dev-server plugin (see source.vite.ts) and the prop
+// only carries a VITE_INSPECTOR_ROOT override, which may be undefined.
+export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
   const mounted = useMounted()
   const [target, setTarget] = useState<TargetInfo | null>(null)
   const [inspecting, setInspecting] = useState(false)
@@ -278,12 +281,18 @@ export function Inspector({ projectRoot }: { projectRoot: string }) {
       resolveElement(el, projectRoot).then((locs) => {
         const loc = pickLocation(locs, shift)
         if (!loc) return
-        const warning = openInEditor(loc, projectRoot, editorRef.current)
-        // Reflect the latest attempt: a successful open (null) also clears any
-        // lingering notice from an earlier failed click.
-        setNotice(warning)
-        if (noticeTimer.current) clearTimeout(noticeTimer.current)
-        if (warning) noticeTimer.current = setTimeout(() => setNotice(null), 6000)
+        // Wrapped in Promise.resolve so this shared file works with either
+        // resolver: Next's openInEditor is synchronous, Vite's is async (it may
+        // have to ask the dev server for the project root first).
+        return Promise.resolve(openInEditor(loc, projectRoot, editorRef.current)).then(
+          (warning) => {
+            // Reflect the latest attempt: a successful open (null) also clears
+            // any lingering notice from an earlier failed click.
+            setNotice(warning)
+            if (noticeTimer.current) clearTimeout(noticeTimer.current)
+            if (warning) noticeTimer.current = setTimeout(() => setNotice(null), 6000)
+          }
+        )
       })
     }
 

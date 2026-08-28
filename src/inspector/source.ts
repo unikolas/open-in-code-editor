@@ -197,19 +197,30 @@ export function openInEditor(
   projectRoot: string,
   editor: string
 ): string | null {
-  // Next always has a real projectRoot (process.cwd() from the server render),
-  // so there's no missing-root case to report — return null to match the Vite
-  // resolver's signature (the shared Inspector surfaces any returned message).
-  if (editor === "auto") {
+  const launchViaDevServer = () => {
     const params = new URLSearchParams({
       file: loc.file,
       line1: String(loc.line1),
       column1: String(loc.column1),
     })
     void fetch(`/__nextjs_launch-editor?${params}`)
+  }
+  if (editor === "auto") {
+    launchViaDevServer()
     return null
   }
-  const abs = loc.file.startsWith("/") ? loc.file : `${projectRoot}/${loc.file}`
+  const isAbsolute = loc.file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(loc.file)
+  // The mount normally passes process.cwd() from the server render, so this is
+  // the hand-wired `<Inspector />` case. Prefixing nothing would deeplink to
+  // `/src/app/page.tsx` and open the wrong file (or none) in silence.
+  if (!isAbsolute && !projectRoot) {
+    launchViaDevServer()
+    return (
+      `Can't open "${editor}": <Inspector /> was mounted without projectRoot, ` +
+      "so there's no absolute path. Pass projectRoot={process.cwd()}."
+    )
+  }
+  const abs = isAbsolute ? loc.file : `${projectRoot}/${loc.file}`
   window.location.href = `${editor}://file${abs}:${loc.line1}:${loc.column1}`
   return null
 }
