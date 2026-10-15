@@ -14,6 +14,7 @@
  */
 
 import type { DebugSource } from "./fiber"
+import { deeplinkPath, isAbsolutePath } from "./paths"
 
 export type SourceLocation = {
   file: string
@@ -209,7 +210,7 @@ export function openInEditor(
     launchViaDevServer()
     return null
   }
-  const isAbsolute = loc.file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(loc.file)
+  const isAbsolute = isAbsolutePath(loc.file)
   // The mount normally passes process.cwd() from the server render, so this is
   // the hand-wired `<Inspector />` case. Prefixing nothing would deeplink to
   // `/src/app/page.tsx` and open the wrong file (or none) in silence.
@@ -223,16 +224,4 @@ export function openInEditor(
   const abs = isAbsolute ? loc.file : `${projectRoot}/${loc.file}`
   window.location.href = `${editor}://file${deeplinkPath(abs)}:${loc.line1}:${loc.column1}`
   return null
-}
-
-/**
- * The path part of an editor deeplink. URL schemes want `file/` followed by a
- * slash-led path, so a Windows path gets one: `vscode://file/C:/Users/me/app/…`,
- * not `fileC:/…`. `%`, `#` and `?` are escaped, or the editor would decode a
- * stray escape or cut the path at a fragment/query (`/Users/me/C#/app`);
- * spaces are left to the browser, which encodes them on navigation.
- */
-function deeplinkPath(abs: string): string {
-  const path = abs.replace(/\\/g, "/").replace(/[%#?]/g, encodeURIComponent)
-  return path.startsWith("/") ? path : `/${path}`
 }

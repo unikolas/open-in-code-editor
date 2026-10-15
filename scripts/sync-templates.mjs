@@ -18,7 +18,7 @@ const inspectorOut = join(templates, "inspector")
 mkdirSync(inspectorOut, { recursive: true })
 
 // Shared inspector files — identical for every framework.
-for (const file of ["Inspector.tsx", "fiber.ts", "ui.tsx"]) {
+for (const file of ["Inspector.tsx", "fiber.ts", "paths.ts", "ui.tsx"]) {
   copyFileSync(join(inspectorSrc, file), join(inspectorOut, file))
 }
 

@@ -65,10 +65,12 @@ function resolveElement(el: Element, projectRoot: string) {
   if (!promise) {
     const fiber = getFiberFromNode(el)
     // Settles to [] on error, so a failure shows as "can't resolve" on hover
-    // and a click does nothing, rather than caching a rejection for the element.
+    // and a click does nothing. It isn't kept, though: the cause may be passing
+    // (a dev server mid-restart), so the next hover over the element retries.
     promise = fiber
       ? resolveSources(getDebugSources(fiber), projectRoot).catch((err: unknown) => {
           console.error("[open-in-code-editor] Couldn't resolve the source:", err)
+          locationCache.delete(el)
           return []
         })
       : Promise.resolve<SourceLocation[]>([])

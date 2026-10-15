@@ -38,6 +38,14 @@
 const PLACEHOLDER = /__OPEN_IN_CODE_EDITOR_ROOT__/
 const QUOTED_PLACEHOLDER = /(["'])__OPEN_IN_CODE_EDITOR_ROOT__\1/g
 
+/**
+ * The route 0.5.0/0.5.1 served the root from. Gone, but still exported: a copy
+ * of their source.ts imports it, and a plain re-run of the installer can put
+ * this file next to one. Without the export that app wouldn't load at all;
+ * with it, the old source.ts falls back to VITE_INSPECTOR_ROOT.
+ */
+export const INSPECTOR_ENDPOINT = "/__open-in-code-editor"
+
 type ResolvedConfigLike = { root?: string }
 
 export function inspectorPlugin() {
@@ -57,15 +65,15 @@ export function inspectorPlugin() {
     },
     transform: {
       // Vite 6.3+ skips the hook for every module without the token; older
-      // versions ignore `filter`, hence the same test in the handler.
+      // versions ignore `filter` and call it for everything.
       filter: { code: PLACEHOLDER },
       handler(code: string) {
-        if (!root || !PLACEHOLDER.test(code)) return null
+        if (!root) return null
         // Replaced within its own line, so no other line's mappings move. A
         // function rather than a string, or a `$` in the path (`/srv/a$'b`)
         // would be read as a replacement pattern.
-        const literal = JSON.stringify(root)
-        return { code: code.replace(QUOTED_PLACEHOLDER, () => literal), map: null }
+        const out = code.replace(QUOTED_PLACEHOLDER, () => JSON.stringify(root))
+        return out === code ? null : { code: out, map: null }
       },
     },
   }

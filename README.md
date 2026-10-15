@@ -81,7 +81,7 @@ for `update`. It's a copy-in tool, not a dependency, so there's nothing for
 ```
 your-app/
   (src/)app/layout.tsx               # + import and a dev-only <Inspector/>
-  (src/)inspector/                   # Inspector.tsx, fiber.ts, source.ts, ui.tsx
+  (src/)inspector/                   # Inspector.tsx, fiber.ts, paths.ts, source.ts, ui.tsx
   (src/)app/api/inspector/route.ts   # optional: install-aware editor picker
 ```
 
@@ -91,7 +91,7 @@ your-app/
 your-app/
   vite.config.ts      # + import and inspectorPlugin() in plugins
   src/main.tsx        # + a dev-only <Inspector/> mount
-  src/inspector/      # Inspector.tsx, fiber.ts, source.ts, ui.tsx, vite-plugin.ts
+  src/inspector/      # Inspector.tsx, fiber.ts, paths.ts, source.ts, ui.tsx, vite-plugin.ts
   .env.local          # + VITE_INSPECTOR_ROOT (gitignored; fallback project root)
 ```
 
@@ -182,7 +182,9 @@ writes your project root into the inspector:
 curl -s localhost:5173/src/inspector/source.ts | grep SERVED_ROOT
 ```
 
-should print your project's absolute path, not `__OPEN_IN_CODE_EDITOR_ROOT__`.
+should print your project's absolute path, not `__OPEN_IN_CODE_EDITOR_ROOT__`
+(adjust the port, add your `base` if you set one, and use the folder the
+installer copied `inspector/` into).
 A stale `VITE_INSPECTOR_ROOT` in `.env.local` is ignored once the plugin is in
 place.
 

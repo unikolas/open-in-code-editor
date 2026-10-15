@@ -20,6 +20,7 @@
  */
 
 import type { DebugSource } from "./fiber"
+import { deeplinkPath, isAbsolutePath } from "./paths"
 
 // inspector/vite-plugin.ts rewrites this literal to Vite's project root as the
 // dev server serves this file. Untouched (plugin not registered), it isn't an
@@ -277,16 +278,7 @@ const ENV_BASE =
  * default). Served paths are decoded before it's stripped from them, and Vite
  * reports it percent-encoded (`/my%20app/`), so it's decoded to match.
  */
-const BASE_DIR = /* @__PURE__ */ trimmedBase(ENV_BASE)
-
-function trimmedBase(base: string): string {
-  return safeDecode(base).replace(/^\/+|\/+$/g, "")
-}
-
-/** A POSIX (`/…`) or Windows drive (`C:\…`, `C:/…`) absolute path. */
-function isAbsolutePath(path: string): boolean {
-  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)
-}
+const BASE_DIR = /* @__PURE__ */ safeDecode(ENV_BASE.replace(/^\/+|\/+$/g, ""))
 
 /**
  * Turn a served URL path back into a file path. URL paths are percent-encoded
@@ -413,8 +405,10 @@ export async function openInEditor(
   projectRoot: string,
   editor: string
 ): Promise<string | null> {
-  // Nothing is awaited before the deeplink below: it has to fire inside the
-  // click's user gesture, or browsers may block the custom-scheme navigation.
+  // Nothing here is awaited before the deeplink below, which has to fire inside
+  // the click's user gesture or browsers may block the custom-scheme
+  // navigation. (The location itself normally resolved during the ⌥-hover
+  // that precedes the click.)
   const isAbsolute = isAbsolutePath(loc.file)
   // Checked here rather than at module scope, so production builds can drop it.
   const pluginRoot = isAbsolutePath(SERVED_ROOT) ? SERVED_ROOT : ""
@@ -450,15 +444,26 @@ export async function openInEditor(
     // working directory instead (Vite registers launch-editor without a root),
     // which is live.
     const target = `${(pluginRoot && abs) || loc.file}:${loc.line1}:${loc.column1}`
+    // The timeout keeps a hung server from leaving the click unanswered.
+    // Guarded: AbortSignal.timeout is missing before Safari 16.
+    const signal =
+      typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(3000) : undefined
     // Under the base, like Vite's own overlay: its base middleware 404s the
     // route at the origin root when `base` isn't "/".
     const res = await fetch(
-      `${ENV_BASE}__open-in-editor?file=${encodeURIComponent(target)}`
+      `${ENV_BASE}__open-in-editor?file=${encodeURIComponent(target)}`,
+      { signal }
     ).catch(() => null)
     // No answer, or a proxy's gateway error: the dev server is down or
     // restarting. Telling the user to reinstall would be wrong.
     if (!res || res.status === 502 || res.status === 503 || res.status === 504) {
       return "Couldn't reach the dev server (it may be restarting). Try again in a moment."
+    }
+    // Vite's launch-editor answers 200 whenever it got a file, so anything else
+    // means the request never reached it (say, a proxy or custom server that
+    // doesn't pass the route through).
+    if (!res.ok) {
+      return `The dev server couldn't open the editor (${ENV_BASE}__open-in-editor answered ${res.status}).`
     }
     return missingRoot
       ? `Can't open "${editor}": the inspector doesn't know your project path, ` +
@@ -468,16 +473,4 @@ export async function openInEditor(
   }
   window.location.href = `${editor}://file${deeplinkPath(abs)}:${loc.line1}:${loc.column1}`
   return null
-}
-
-/**
- * The path part of an editor deeplink. URL schemes want `file/` followed by a
- * slash-led path, so a Windows path gets one: `vscode://file/C:/Users/me/app/…`,
- * not `fileC:/…`. `%`, `#` and `?` are escaped, or the editor would decode a
- * stray escape or cut the path at a fragment/query (`/Users/me/C#/app`);
- * spaces are left to the browser, which encodes them on navigation.
- */
-function deeplinkPath(abs: string): string {
-  const path = abs.replace(/\\/g, "/").replace(/[%#?]/g, encodeURIComponent)
-  return path.startsWith("/") ? path : `/${path}`
 }
