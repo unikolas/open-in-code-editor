@@ -77,8 +77,9 @@ function acceptFrameFile(file: string): string | null {
   if (typeof location !== "undefined" && url.origin !== location.origin) return null
   if (url.pathname.includes("/node_modules/")) return null
   // Not anchored at "/": under a non-default `base` these live at
-  // `/app/@vite/client`, not `/@vite/client`.
-  if (/\/@(vite|react-refresh)/.test(url.pathname)) return null
+  // `/app/@vite/client`, not `/@vite/client`. Matched exactly, so an app folder
+  // like `src/@vite-helpers/` isn't mistaken for Vite's own modules.
+  if (/\/@(?:vite\/|react-refresh$)/.test(url.pathname)) return null
   return file
 }
 
@@ -238,7 +239,7 @@ function originalPositionFor(
   if (source == null) return null
 
   // /@fs/ is Vite's way of serving an absolute path — unwrap to the fs path.
-  const raw = source.startsWith("/@fs/") ? source.slice(4) : source
+  const raw = source.startsWith(FS_PREFIX) ? unwrapFsPath(source, 0) : source
 
   let file: string
   if (raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw)) {
@@ -247,17 +248,47 @@ function originalPositionFor(
     file = raw
   } else {
     // Vite's usual case: source is relative to the served module. Resolve it
-    // to a project-relative path (leading slash stripped).
+    // against the module URL, then turn that URL path back into a file path.
     try {
       const base = map.sourceRoot
         ? new URL(map.sourceRoot.replace(/\/?$/, "/"), map.url)
         : new URL(map.url)
-      file = new URL(raw, base).pathname.replace(/^\/+/, "")
+      file = filePathFromUrlPath(new URL(raw, base).pathname)
     } catch {
       file = raw.replace(/^\/+/, "")
     }
   }
   return { file, line1: seg[2] + 1, column1: seg[3] + 1 }
+}
+
+const FS_PREFIX = "/@fs/"
+
+/**
+ * Turn a served URL path back into a file path. URL paths are percent-encoded
+ * (`My%20Card.tsx`), and files outside the Vite root — monorepo siblings — are
+ * served as `/@fs/<absolute path>` (behind `base`, if set), which has to come
+ * back absolute rather than be prefixed with the project root. Anything else
+ * is project-relative (leading slash stripped).
+ */
+function filePathFromUrlPath(pathname: string): string {
+  const path = safeDecode(pathname)
+  const fs = path.indexOf(FS_PREFIX)
+  return fs === -1 ? path.replace(/^\/+/, "") : unwrapFsPath(path, fs)
+}
+
+/** The absolute path after a `/@fs/` at `at`; drive-letter paths get no slash. */
+function unwrapFsPath(path: string, at: number): string {
+  const abs = path.slice(at + FS_PREFIX.length)
+  return /^[A-Za-z]:/.test(abs) ? abs : `/${abs}`
+}
+
+/** decodeURIComponent that leaves malformed input (a literal `50%off.tsx`) as-is. */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s)
+  } catch {
+    return s
+  }
 }
 
 /**
@@ -273,6 +304,9 @@ export async function resolveSources(
   // Resolution is projectRoot-independent — Vite frames carry the project path
   // in their URLs. The parameter is kept for parity with the Next resolver.
   void projectRoot
+  // This runs on ⌥-hover, so start the root lookup now; by the time the click
+  // lands, openInEditor finds it cached instead of waiting on the round trip.
+  void fetchServerInfo()
   const frames = candidateFrames(sources)
   if (frames.length === 0) return []
 
@@ -328,7 +362,12 @@ export async function detectEditors(): Promise<EditorOption[]> {
   return FALLBACK_EDITORS
 }
 
-type ServerInfo = { root: string; base: string }
+/**
+ * `reachable: false` means the dev server didn't answer at all (restarting,
+ * stopped, hung) — as opposed to answering without the plugin, which is a
+ * reachable server with an empty root.
+ */
+type ServerInfo = { root: string; base: string; reachable: boolean }
 
 /**
  * Vite inlines the configured base here, so a resolved path can be
@@ -337,7 +376,8 @@ type ServerInfo = { root: string; base: string }
 const ENV_BASE =
   (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL || "/"
 
-const NO_SERVER_INFO: ServerInfo = { root: "", base: ENV_BASE }
+const NO_PLUGIN: ServerInfo = { root: "", base: ENV_BASE, reachable: true }
+const UNREACHABLE: ServerInfo = { root: "", base: ENV_BASE, reachable: false }
 
 let serverInfo: Promise<ServerInfo> | null = null
 
@@ -345,39 +385,58 @@ let serverInfo: Promise<ServerInfo> | null = null
  * Ask the dev server where the project lives. An empty root means the Vite
  * plugin isn't registered — the inspector then falls back to
  * `VITE_INSPECTOR_ROOT` and, failing that, to Vite's own `/__open-in-editor`.
- * Successes are cached for the page's lifetime; failures aren't, so a click that
- * lands while the server is restarting (which registering the plugin itself
- * causes) doesn't pin the tab to the fallback until a manual reload.
+ * Without the plugin Vite's SPA fallback usually answers with index.html (a
+ * 200 that isn't JSON), otherwise a 404.
+ *
+ * Any answer from the server is cached for the page's lifetime: registering
+ * the plugin restarts Vite, and its client reloads the page after a restart,
+ * so a cached "no plugin" can't outlive the fix. Only "unreachable" is retried
+ * — a click that lands mid-restart mustn't pin the tab to the fallback. The
+ * timeout keeps a hung request from stalling every later click, since they
+ * all share it.
  */
 async function fetchServerInfo(): Promise<ServerInfo> {
   if (!serverInfo) {
     serverInfo = (async () => {
       try {
-        const res = await fetch(INSPECTOR_ENDPOINT)
-        if (!res.ok) return NO_SERVER_INFO
-        const body = (await res.json()) as { root?: unknown; base?: unknown }
-        if (typeof body.root !== "string" || !body.root) return NO_SERVER_INFO
+        // Guarded: AbortSignal.timeout is missing before Safari 16.
+        const signal =
+          typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(3000) : undefined
+        const res = await fetch(INSPECTOR_ENDPOINT, { signal })
+        // Gateway errors: a proxy in front of a Vite that's down or restarting.
+        if (res.status === 502 || res.status === 503 || res.status === 504) return UNREACHABLE
+        if (!res.ok) return NO_PLUGIN
+        // Not JSON (index.html) means no plugin; a timeout or reset while
+        // reading the body is still "unreachable", so only SyntaxError counts.
+        const body = (await res.json().catch((err: unknown) => {
+          if (err instanceof SyntaxError) return null
+          throw err
+        })) as { root?: unknown; base?: unknown } | null
+        if (!body || typeof body.root !== "string" || !body.root) return NO_PLUGIN
         return {
           root: body.root,
           base: typeof body.base === "string" && body.base ? body.base : ENV_BASE,
+          reachable: true,
         }
       } catch {
-        return NO_SERVER_INFO
+        return UNREACHABLE
       }
     })()
   }
   const info = await serverInfo
-  if (!info.root) serverInfo = null
+  if (!info.reachable) serverInfo = null
   return info
 }
 
 /**
  * Resolved paths are derived from module URL *pathnames*, so under a non-default
  * `base` they carry that prefix (`base: "/app/"` -> `app/src/Card.tsx`) while
- * the project root does not. Strip it before joining the two.
+ * the project root does not. Strip it before joining the two. `file` is
+ * already decoded (see filePathFromUrlPath), while Vite reports `base`
+ * percent-encoded (`/my%20app/`), so decode it to match.
  */
 function stripBase(file: string, base: string): string {
-  const prefix = base.replace(/^\/+/, "").replace(/\/*$/, "/")
+  const prefix = safeDecode(base).replace(/^\/+/, "").replace(/\/*$/, "/")
   return prefix !== "/" && file.startsWith(prefix) ? file.slice(prefix.length) : file
 }
 
@@ -409,12 +468,14 @@ export async function openInEditor(
   let root = envRoot
   let file = loc.file
   let authoritative = false
+  let reachable = true
 
   // Only pay for the round trip when a root is actually needed.
   if (!isAbsolute) {
     const info = await fetchServerInfo()
     const pluginRoot = info.root.replace(/\/+$/, "")
     file = stripBase(file, info.base)
+    reachable = info.reachable
     if (pluginRoot) {
       root = pluginRoot
       authoritative = true
@@ -439,6 +500,11 @@ export async function openInEditor(
   // goes unseen).
   const missingRoot = editor !== "auto" && !abs
   if (editor === "auto" || !abs) {
+    // The fallback below needs the dev server too, and it didn't answer — most
+    // likely it's restarting. Telling the user to reinstall would be wrong.
+    if (!reachable) {
+      return "Couldn't reach the dev server (it may be restarting). Try again in a moment."
+    }
     if (missingRoot && !warnedMissingRoot) {
       warnedMissingRoot = true
       console.warn(
@@ -450,16 +516,31 @@ export async function openInEditor(
       )
     }
     // Only hand over an absolute path we trust. An unverified `VITE_INSPECTOR_ROOT`
-    // may point at a moved project, and Vite resolves a relative path against
-    // its own root anyway — strictly better than a confidently wrong one.
+    // may point at a moved project, while a relative path is resolved against
+    // the dev server's working directory (Vite registers launch-editor without
+    // a root) — the project root in the usual setup, and a live value.
     const target = `${authoritative && abs ? abs : file}:${loc.line1}:${loc.column1}`
-    void fetch(`/__open-in-editor?file=${encodeURIComponent(target)}`)
+    // Under the base, like Vite's own overlay: its base middleware 404s the
+    // route at the origin root when `base` isn't "/".
+    void fetch(`${ENV_BASE}__open-in-editor?file=${encodeURIComponent(target)}`)
     return missingRoot
       ? `Can't open "${editor}": the inspector doesn't know your project path, ` +
           "so the dev server picked the editor. Run `npx " +
           "open-in-code-editor@latest update` to add the Vite plugin."
       : null
   }
-  window.location.href = `${editor}://file${abs}:${loc.line1}:${loc.column1}`
+  window.location.href = `${editor}://file${deeplinkPath(abs)}:${loc.line1}:${loc.column1}`
   return null
+}
+
+/**
+ * The path part of an editor deeplink. URL schemes want `file/` followed by a
+ * slash-led path, so a Windows path gets one: `vscode://file/C:/Users/me/app/…`,
+ * not `fileC:/…`. `%`, `#` and `?` are escaped, or the editor would decode a
+ * stray escape or cut the path at a fragment/query (`/Users/me/C#/app`);
+ * spaces are left to the browser, which encodes them on navigation.
+ */
+function deeplinkPath(abs: string): string {
+  const path = abs.replace(/\\/g, "/").replace(/[%#?]/g, encodeURIComponent)
+  return path.startsWith("/") ? path : `/${path}`
 }

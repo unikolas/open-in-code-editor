@@ -80,7 +80,6 @@ export function inspectorPlugin() {
         res.statusCode = 200
         res.setHeader("content-type", "application/json")
         res.setHeader("cache-control", "no-store")
-        res.setHeader("vary", "sec-fetch-site")
         res.end(JSON.stringify({ root, base }))
       })
     },
