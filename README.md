@@ -5,7 +5,7 @@ Click-to-source inspector for **Next.js** and **Vite** React apps. Hold
 label shows the component name, line, and source file — then
 <kbd>⌥ Option</kbd>+click to open that exact location in your editor.
 
-![open-in-code-editor in action: holding ⌥ highlights a component and shows its name, line, and file, with an editor picker top-right](docs/screenshot.png)
+![open-in-code-editor in action: holding ⌥ highlights a component and shows its name, line, and file](docs/screenshot.png)
 
 - **Source or usage**: <kbd>⌥ Option</kbd>+click opens the component that
   renders the element (its definition); add <kbd>⇧ Shift</kbd> to jump
