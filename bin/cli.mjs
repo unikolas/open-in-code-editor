@@ -250,16 +250,18 @@ function wireVite() {
   writeEnvLocal()
   ensureGitignore()
 
-  // A pre-0.5.0 inspector/ that a plain re-run left in place doesn't know about
-  // the endpoint, so the plugin alone wouldn't help it — .env.local (above) is
-  // what keeps it working, and `update` is what upgrades it.
+  // A pre-0.5.2 inspector/ that a plain re-run left in place has no placeholder
+  // for the plugin to write the root into, so the plugin alone wouldn't help it
+  // — .env.local (above) or its own older plugin is what keeps it working, and
+  // `update` is what upgrades it.
   const resolver = join(inspectorDir, "source.ts")
   const staleResolver =
-    existsSync(resolver) && !readFileSync(resolver, "utf8").includes("__open-in-code-editor")
+    existsSync(resolver) &&
+    !readFileSync(resolver, "utf8").includes("__OPEN_IN_CODE_EDITOR_ROOT__")
   if (staleResolver) {
     log(
-      "• inspector/source.ts predates the dev-server plugin — run " +
-        "`npx open-in-code-editor@latest update` to use it.",
+      "• inspector/source.ts is from an older version — run " +
+        "`npx open-in-code-editor@latest update` to use the dev-server plugin.",
     )
   }
 

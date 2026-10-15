@@ -175,10 +175,8 @@ before it existed, or a `vite.config` the installer couldn't patch):
 npx open-in-code-editor@latest update
 ```
 
-Then check `vite.config.*` contains `inspectorPlugin()` and that
-`curl localhost:5173/__open-in-code-editor` returns your project root. A stale
-`VITE_INSPECTOR_ROOT` in `.env.local` is ignored once the plugin is in place
-(the inspector logs a warning naming both paths so you can delete the line).
+Then check `vite.config.*` contains `inspectorPlugin()`. A stale
+`VITE_INSPECTOR_ROOT` in `.env.local` is ignored once the plugin is in place.
 
 ## How it works
 
@@ -196,10 +194,9 @@ call site in compiled code — then maps those frames back to your `src/` files:
 
 Opening the editor is a plain `vscode://file/<path>:<line>:<column>`-style
 deeplink fired from the browser — no editor CLI on your `PATH` required. On
-Vite the absolute path comes from the dev-only plugin's
-`GET /__open-in-code-editor`, which reports Vite's own `root`
-(`VITE_INSPECTOR_ROOT` still works as a fallback for installs predating the
-plugin).
+Vite the absolute path comes from the dev-only plugin, which writes Vite's own
+`root` into the inspector as the dev server serves it (`VITE_INSPECTOR_ROOT`
+still works as a fallback for installs predating the plugin).
 
 Because the whole owner chain resolves — innermost (the element's own
 definition) through outermost (where it's used on the page) — a plain click

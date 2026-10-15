@@ -152,12 +152,9 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
   useEffect(() => {
     if (!IS_DEV) return
 
-    // Opening is async (source maps, and on Vite the project root), so clicks
-    // can settle out of order or after unmount. A click superseded before its
-    // location resolves never opens, and only the latest click (while mounted)
-    // touches the notice. One already handed to openInEditor still opens —
-    // clicks sharing a pending root lookup open in click order, so the editor
-    // ends up on the latest.
+    // Resolving a location is async (source maps), so clicks can settle out of
+    // order or after unmount. A click superseded before its location resolves
+    // never opens, and only the latest click (while mounted) touches the notice.
     let disposed = false
     let clickSeq = 0
 
@@ -179,9 +176,12 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
         return null
       }
       const label = editorsRef.current.find((e) => e.id === id)?.label ?? id
+      const alt = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
+        ? "⌥"
+        : "Alt"
       return (
-        `Opened in ${label}. Not your editor? Hold ⌥ and pick yours from the ` +
-        "menu in the top-right."
+        `Opened in ${label}. Not your editor? Hold ${alt} and pick yours from ` +
+        "the menu in the top-right."
       )
     }
 
@@ -326,22 +326,21 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
       const shift = e.shiftKey
       const seq = ++clickSeq
       const isLatest = () => !disposed && seq === clickSeq
-      resolveElement(el, projectRoot).then((locs) => {
-        const loc = pickLocation(locs, shift)
-        if (!loc || !isLatest()) return
-        const editor = editorRef.current
-        // Wrapped in Promise.resolve so this shared file works with either
-        // resolver: Next's openInEditor is synchronous, Vite's is async (it may
-        // have to ask the dev server for the project root first).
-        return Promise.resolve(openInEditor(loc, projectRoot, editor)).then((warning) => {
-          if (!isLatest()) return
+      resolveElement(el, projectRoot)
+        .then((locs) => {
+          const loc = pickLocation(locs, shift)
+          if (!loc || !isLatest()) return
+          const editor = editorRef.current
+          const warning = openInEditor(loc, projectRoot, editor)
           // Reflect the latest attempt: a successful open (null) also clears
           // any lingering notice from an earlier failed click.
           if (warning) return showNotice(warning)
-          const hint = editorHint(editor)
-          showNotice(hint, "info")
+          showNotice(editorHint(editor), "info")
         })
-      })
+        .catch((err: unknown) => {
+          console.error("[open-in-code-editor] Couldn't open the editor:", err)
+          if (isLatest()) showNotice("Couldn't open the editor — see the console.")
+        })
     }
 
     const opts = { capture: true } as const
