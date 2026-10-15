@@ -116,6 +116,7 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
   const shiftRef = useRef(false)
   const lastPointer = useRef({ x: 0, y: 0 })
   const editorRef = useRef(editor)
+  const editorsRef = useRef(editors)
   const detectStartedRef = useRef(false)
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -135,6 +136,7 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
     detectStartedRef.current = true
     detectEditors().then((list) => {
       setEditors(list)
+      editorsRef.current = list
       // If nothing was stored and the default isn't installed, pick the
       // first detected editor.
       const stored =
@@ -151,7 +153,11 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
     if (!IS_DEV) return
 
     // Opening is async (source maps, and on Vite the project root), so clicks
-    // can settle out of order or after unmount. Only the latest click acts.
+    // can settle out of order or after unmount. A click superseded before its
+    // location resolves never opens, and only the latest click (while mounted)
+    // touches the notice. One already handed to openInEditor still opens —
+    // clicks sharing a pending root lookup open in click order, so the editor
+    // ends up on the latest.
     let disposed = false
     let clickSeq = 0
 
@@ -172,7 +178,7 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
       } catch {
         return null
       }
-      const label = FALLBACK_EDITORS.find((e) => e.id === id)?.label ?? id
+      const label = editorsRef.current.find((e) => e.id === id)?.label ?? id
       return (
         `Opened in ${label}. Not your editor? Hold ⌥ and pick yours from the ` +
         "menu in the top-right."
@@ -363,7 +369,10 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
       window.removeEventListener("click", swallow, opts)
       window.removeEventListener("pointerup", onPointerUp, opts)
       disposed = true
+      // Its timer is cleared here, so the notice goes too — a re-run effect
+      // (projectRoot change, Fast Refresh) would otherwise leave it up for good.
       if (noticeTimer.current) clearTimeout(noticeTimer.current)
+      setNotice(null)
     }
   }, [projectRoot])
 
