@@ -173,13 +173,22 @@ export function InspectorOverlay({ target }: { target: TargetInfo | null }) {
   )
 }
 
+export type NoticeTone = "error" | "info"
+
 /**
- * Transient toast, bottom-center. Shown when a click resolved a location but
- * the chosen editor couldn't be opened (e.g. the Vite project root is unknown,
- * so the picker choice can't be honored). Console warnings go unseen; this
- * surfaces the reason where the user is already looking.
+ * Transient toast, bottom-center. Red ("error") when a click resolved a
+ * location but the chosen editor couldn't be opened (e.g. the Vite project
+ * root is unknown, so the picker choice can't be honored); dark ("info") for
+ * one-off hints. Console warnings go unseen; this surfaces the message where
+ * the user is already looking.
  */
-export function InspectorNotice({ message }: { message: string }) {
+export function InspectorNotice({
+  message,
+  tone = "error",
+}: {
+  message: string
+  tone?: NoticeTone
+}) {
   return (
     <div
       data-inspector=""
@@ -199,7 +208,7 @@ export function InspectorNotice({ message }: { message: string }) {
         style={{
           maxWidth: "min(90vw, 460px)",
           padding: "8px 12px",
-          background: "#b91c1c",
+          background: tone === "info" ? "#18181b" : "#b91c1c",
           color: "#fff",
           fontSize: 12,
           lineHeight: 1.4,

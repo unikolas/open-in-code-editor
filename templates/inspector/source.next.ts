@@ -221,6 +221,15 @@ export function openInEditor(
     )
   }
   const abs = isAbsolute ? loc.file : `${projectRoot}/${loc.file}`
-  window.location.href = `${editor}://file${abs}:${loc.line1}:${loc.column1}`
+  window.location.href = `${editor}://file${deeplinkPath(abs)}:${loc.line1}:${loc.column1}`
   return null
+}
+
+/**
+ * Editor URL schemes want `file/` followed by a slash-led path, so a Windows
+ * path needs one added: `vscode://file/C:/Users/me/app/…`, not `fileC:\…`.
+ */
+function deeplinkPath(abs: string): string {
+  const path = abs.replace(/\\/g, "/")
+  return path.startsWith("/") ? path : `/${path}`
 }

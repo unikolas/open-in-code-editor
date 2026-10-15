@@ -45,9 +45,18 @@ import {
   type EditorOption,
   type SourceLocation,
 } from "./source"
-import { EditorSelect, InspectorNotice, InspectorOverlay, type TargetInfo } from "./ui"
+import {
+  EditorSelect,
+  InspectorNotice,
+  InspectorOverlay,
+  type NoticeTone,
+  type TargetInfo,
+} from "./ui"
 
 const EDITOR_STORAGE_KEY = "inspector.editor"
+// Set once the "not your editor?" hint has been shown, so it appears only on
+// the very first open in a browser that never picked an editor.
+const EDITOR_HINT_KEY = "inspector.editorHintShown"
 
 const locationCache = new WeakMap<Element, Promise<SourceLocation[]>>()
 
@@ -84,7 +93,7 @@ const useMounted = () =>
   )
 
 // projectRoot is optional: Next passes process.cwd(), while on Vite the root
-// normally comes from the dev-server plugin (see source.vite.ts) and the prop
+// normally comes from the dev-server plugin (see vite-plugin.ts) and the prop
 // only carries a VITE_INSPECTOR_ROOT override, which may be undefined.
 export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
   const mounted = useMounted()
@@ -97,7 +106,9 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
         localStorage.getItem(EDITOR_STORAGE_KEY)) ||
       "vscode"
   )
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ message: string; tone: NoticeTone } | null>(
+    null
+  )
 
   const targetElRef = useRef<Element | null>(null)
   const targetLocsRef = useRef<SourceLocation[] | null>(null)
@@ -138,6 +149,35 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
 
   useEffect(() => {
     if (!IS_DEV) return
+
+    // Opening is async (source maps, and on Vite the project root), so clicks
+    // can settle out of order or after unmount. Only the latest click acts.
+    let disposed = false
+    let clickSeq = 0
+
+    const showNotice = (message: string | null, tone: NoticeTone = "error") => {
+      setNotice(message ? { message, tone } : null)
+      if (noticeTimer.current) clearTimeout(noticeTimer.current)
+      if (message) noticeTimer.current = setTimeout(() => setNotice(null), 6000)
+    }
+
+    // The default editor is a guess, and a URL scheme nobody handles fails in
+    // silence. So the first open in a browser that never picked an editor says
+    // which one it used and where to change it.
+    const editorHint = (id: string): string | null => {
+      try {
+        if (id === "auto" || localStorage.getItem(EDITOR_STORAGE_KEY)) return null
+        if (localStorage.getItem(EDITOR_HINT_KEY)) return null
+        localStorage.setItem(EDITOR_HINT_KEY, "1")
+      } catch {
+        return null
+      }
+      const label = FALLBACK_EDITORS.find((e) => e.id === id)?.label ?? id
+      return (
+        `Opened in ${label}. Not your editor? Hold ⌥ and pick yours from the ` +
+        "menu in the top-right."
+      )
+    }
 
     const clearTarget = () => {
       targetElRef.current = null
@@ -278,21 +318,23 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
       e.preventDefault()
       e.stopPropagation()
       const shift = e.shiftKey
+      const seq = ++clickSeq
+      const isLatest = () => !disposed && seq === clickSeq
       resolveElement(el, projectRoot).then((locs) => {
         const loc = pickLocation(locs, shift)
-        if (!loc) return
+        if (!loc || !isLatest()) return
+        const editor = editorRef.current
         // Wrapped in Promise.resolve so this shared file works with either
         // resolver: Next's openInEditor is synchronous, Vite's is async (it may
         // have to ask the dev server for the project root first).
-        return Promise.resolve(openInEditor(loc, projectRoot, editorRef.current)).then(
-          (warning) => {
-            // Reflect the latest attempt: a successful open (null) also clears
-            // any lingering notice from an earlier failed click.
-            setNotice(warning)
-            if (noticeTimer.current) clearTimeout(noticeTimer.current)
-            if (warning) noticeTimer.current = setTimeout(() => setNotice(null), 6000)
-          }
-        )
+        return Promise.resolve(openInEditor(loc, projectRoot, editor)).then((warning) => {
+          if (!isLatest()) return
+          // Reflect the latest attempt: a successful open (null) also clears
+          // any lingering notice from an earlier failed click.
+          if (warning) return showNotice(warning)
+          const hint = editorHint(editor)
+          showNotice(hint, "info")
+        })
       })
     }
 
@@ -320,6 +362,7 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
       window.removeEventListener("mouseup", swallow, opts)
       window.removeEventListener("click", swallow, opts)
       window.removeEventListener("pointerup", onPointerUp, opts)
+      disposed = true
       if (noticeTimer.current) clearTimeout(noticeTimer.current)
     }
   }, [projectRoot])
@@ -331,7 +374,7 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
         <EditorSelect editors={editors} value={editor} onChange={changeEditor} />
       )}
       <InspectorOverlay target={target} />
-      {notice && <InspectorNotice message={notice} />}
+      {notice && <InspectorNotice message={notice.message} tone={notice.tone} />}
     </div>,
     document.body
   )
