@@ -175,8 +175,16 @@ before it existed, or a `vite.config` the installer couldn't patch):
 npx open-in-code-editor@latest update
 ```
 
-Then check `vite.config.*` contains `inspectorPlugin()`. A stale
-`VITE_INSPECTOR_ROOT` in `.env.local` is ignored once the plugin is in place.
+Then check `vite.config.*` contains `inspectorPlugin()`, and that the dev server
+writes your project root into the inspector:
+
+```bash
+curl -s localhost:5173/src/inspector/source.ts | grep SERVED_ROOT
+```
+
+should print your project's absolute path, not `__OPEN_IN_CODE_EDITOR_ROOT__`.
+A stale `VITE_INSPECTOR_ROOT` in `.env.local` is ignored once the plugin is in
+place.
 
 ## How it works
 

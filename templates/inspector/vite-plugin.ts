@@ -31,9 +31,12 @@
  *    here comes from Vite's own objects instead.
  */
 
-// The quoted placeholder in source.ts (`SERVED_ROOT`). Either quote style, so a
-// formatter run over inspector/ doesn't break the match.
-const ROOT_PLACEHOLDER = /(["'])__OPEN_IN_CODE_EDITOR_ROOT__\1/g
+// The placeholder in source.ts (`SERVED_ROOT`), and the same token with its
+// quotes — either style, so a formatter run over inspector/ doesn't break the
+// match. Regex literals only: a quoted copy of the token in this file would be
+// rewritten too if Vite ever served it (a test importing the plugin, say).
+const PLACEHOLDER = /__OPEN_IN_CODE_EDITOR_ROOT__/
+const QUOTED_PLACEHOLDER = /(["'])__OPEN_IN_CODE_EDITOR_ROOT__\1/g
 
 type ResolvedConfigLike = { root?: string }
 
@@ -52,11 +55,18 @@ export function inspectorPlugin() {
     configResolved(config: ResolvedConfigLike) {
       root = config.root ?? ""
     },
-    transform(code: string, id: string) {
-      if (!root || id.includes("/node_modules/")) return null
-      if (!code.includes("__OPEN_IN_CODE_EDITOR_ROOT__")) return null
-      // Replaced within its own line, so no other line's mappings move.
-      return { code: code.replace(ROOT_PLACEHOLDER, JSON.stringify(root)), map: null }
+    transform: {
+      // Vite 6.3+ skips the hook for every module without the token; older
+      // versions ignore `filter`, hence the same test in the handler.
+      filter: { code: PLACEHOLDER },
+      handler(code: string) {
+        if (!root || !PLACEHOLDER.test(code)) return null
+        // Replaced within its own line, so no other line's mappings move. A
+        // function rather than a string, or a `$` in the path (`/srv/a$'b`)
+        // would be read as a replacement pattern.
+        const literal = JSON.stringify(root)
+        return { code: code.replace(QUOTED_PLACEHOLDER, () => literal), map: null }
+      },
     },
   }
 }

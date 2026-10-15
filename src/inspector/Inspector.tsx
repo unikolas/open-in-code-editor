@@ -64,8 +64,13 @@ function resolveElement(el: Element, projectRoot: string) {
   let promise = locationCache.get(el)
   if (!promise) {
     const fiber = getFiberFromNode(el)
+    // Settles to [] on error, so a failure shows as "can't resolve" on hover
+    // and a click does nothing, rather than caching a rejection for the element.
     promise = fiber
-      ? resolveSources(getDebugSources(fiber), projectRoot)
+      ? resolveSources(getDebugSources(fiber), projectRoot).catch((err: unknown) => {
+          console.error("[open-in-code-editor] Couldn't resolve the source:", err)
+          return []
+        })
       : Promise.resolve<SourceLocation[]>([])
     locationCache.set(el, promise)
   }
@@ -152,9 +157,10 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
   useEffect(() => {
     if (!IS_DEV) return
 
-    // Resolving a location is async (source maps), so clicks can settle out of
-    // order or after unmount. A click superseded before its location resolves
-    // never opens, and only the latest click (while mounted) touches the notice.
+    // Resolving a location is async (source maps), and so is Vite's dev-server
+    // fallback, so clicks can settle out of order or after unmount. A click
+    // superseded before its location resolves never opens, and only the latest
+    // click (while mounted) touches the notice.
     let disposed = false
     let clickSeq = 0
 
@@ -331,11 +337,16 @@ export function Inspector({ projectRoot = "" }: { projectRoot?: string }) {
           const loc = pickLocation(locs, shift)
           if (!loc || !isLatest()) return
           const editor = editorRef.current
-          const warning = openInEditor(loc, projectRoot, editor)
-          // Reflect the latest attempt: a successful open (null) also clears
-          // any lingering notice from an earlier failed click.
-          if (warning) return showNotice(warning)
-          showNotice(editorHint(editor), "info")
+          // Wrapped in Promise.resolve so this shared file works with either
+          // resolver: Next's openInEditor is synchronous, Vite's resolves once
+          // its dev-server fallback answers (deeplinks still fire synchronously).
+          return Promise.resolve(openInEditor(loc, projectRoot, editor)).then((warning) => {
+            if (!isLatest()) return
+            // Reflect the latest attempt: a successful open (null) also clears
+            // any lingering notice from an earlier failed click.
+            if (warning) return showNotice(warning)
+            showNotice(editorHint(editor), "info")
+          })
         })
         .catch((err: unknown) => {
           console.error("[open-in-code-editor] Couldn't open the editor:", err)

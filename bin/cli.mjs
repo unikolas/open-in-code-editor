@@ -6,7 +6,7 @@
 // Detects a Next.js app-router or a Vite + React project, copies the inspector
 // in with a relative import (no `@/` alias required), and wires the entry file
 // (layout.tsx for Next, main.tsx for Vite). On Vite it also registers a dev-only
-// plugin in vite.config so the dev server can report the project root that
+// plugin in vite.config so the dev server can supply the project root that
 // editor deeplinks need. Idempotent and dependency-free.
 // The entry wiring is never touched twice; `update`/`--force` only overwrites
 // the copied inspector files, so pin a version to upgrade:
@@ -121,7 +121,7 @@ if (inspectorExists && !force) {
   const resolver = framework === "next" ? "source.next.ts" : "source.vite.ts"
   for (const file of readdirSync(join(templates, "inspector"))) {
     if (file === "source.next.ts" || file === "source.vite.ts") continue
-    // The plugin is Vite's way of reporting the project root; Next.js gets that
+    // The plugin is Vite's way of supplying the project root; Next.js gets that
     // from its server render, so it has no use for the file.
     if (file === "vite-plugin.ts" && framework !== "vite") continue
     const src = join(templates, "inspector", file)
@@ -250,18 +250,18 @@ function wireVite() {
   writeEnvLocal()
   ensureGitignore()
 
-  // A pre-0.5.2 inspector/ that a plain re-run left in place has no placeholder
-  // for the plugin to write the root into, so the plugin alone wouldn't help it
-  // — .env.local (above) or its own older plugin is what keeps it working, and
-  // `update` is what upgrades it.
+  // A pre-0.5.0 inspector/ that a plain re-run left in place has neither the
+  // placeholder this plugin fills in nor the root request 0.5.0/0.5.1 made, so
+  // the plugin alone wouldn't help it — .env.local (above) is what keeps it
+  // working, and `update` is what upgrades it. A 0.5.x one keeps its own plugin.
   const resolver = join(inspectorDir, "source.ts")
   const staleResolver =
     existsSync(resolver) &&
-    !readFileSync(resolver, "utf8").includes("__OPEN_IN_CODE_EDITOR_ROOT__")
+    !/__OPEN_IN_CODE_EDITOR_ROOT__|__open-in-code-editor/.test(readFileSync(resolver, "utf8"))
   if (staleResolver) {
     log(
-      "• inspector/source.ts is from an older version — run " +
-        "`npx open-in-code-editor@latest update` to use the dev-server plugin.",
+      "• inspector/source.ts predates the dev-server plugin — run " +
+        "`npx open-in-code-editor@latest update` to use it.",
     )
   }
 

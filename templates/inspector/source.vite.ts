@@ -243,7 +243,7 @@ function originalPositionFor(
   const raw = source.startsWith(FS_PREFIX) ? unwrapFsPath(source) : source
 
   let file: string
-  if (raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw)) {
+  if (isAbsolutePath(raw)) {
     // Absolute source path (some toolchains emit these) — keep it as-is so
     // openInEditor sees the leading slash and won't re-prefix projectRoot.
     file = raw
@@ -273,6 +273,22 @@ const ENV_BASE =
   (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL || "/"
 
 /**
+ * `base` decoded and without its slashes ("app" for `base: "/app/"`, "" for the
+ * default). Served paths are decoded before it's stripped from them, and Vite
+ * reports it percent-encoded (`/my%20app/`), so it's decoded to match.
+ */
+const BASE_DIR = /* @__PURE__ */ trimmedBase(ENV_BASE)
+
+function trimmedBase(base: string): string {
+  return safeDecode(base).replace(/^\/+|\/+$/g, "")
+}
+
+/** A POSIX (`/…`) or Windows drive (`C:\…`, `C:/…`) absolute path. */
+function isAbsolutePath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)
+}
+
+/**
  * Turn a served URL path back into a file path. URL paths are percent-encoded
  * (`My%20Card.tsx`) and prefixed with `base`; files outside the Vite root —
  * monorepo siblings — are served as `/@fs/<absolute path>`, which has to come
@@ -285,14 +301,11 @@ function filePathFromUrlPath(pathname: string): string {
   return path.startsWith(FS_PREFIX) ? unwrapFsPath(path) : path.replace(/^\/+/, "")
 }
 
-/**
- * Drop the `base` prefix, keeping the leading slash. Vite reports `base`
- * percent-encoded (`/my%20app/`) and `path` is already decoded, so decode it
- * to match.
- */
+/** Drop the `base` prefix from a decoded URL path, keeping the leading slash. */
 function stripBase(path: string): string {
-  const base = safeDecode(ENV_BASE).replace(/^\/+|\/+$/g, "")
-  return base && path.startsWith(`/${base}/`) ? path.slice(base.length + 1) : path
+  return BASE_DIR && path.startsWith(`/${BASE_DIR}/`)
+    ? path.slice(BASE_DIR.length + 1)
+    : path
 }
 
 /** The absolute path after a leading `/@fs/`; drive-letter paths get no slash. */
@@ -390,19 +403,21 @@ export async function detectEditors(): Promise<EditorOption[]> {
  *      the path server-side but picks the editor itself (LAUNCH_EDITOR/EDITOR,
  *      else a guess that needs `code` on PATH), so the picker is ignored.
  *
- * "auto" always takes route 3 by request. Returns a message for the overlay when
- * the click couldn't be honored as asked, else null.
+ * "auto" always takes route 3 by request. Resolves to a message for the overlay
+ * when the click couldn't be honored as asked, else null.
  */
 let warnedMissingRoot = false
 
-export function openInEditor(
+export async function openInEditor(
   loc: SourceLocation,
   projectRoot: string,
   editor: string
-): string | null {
-  const isAbsolute = loc.file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(loc.file)
+): Promise<string | null> {
+  // Nothing is awaited before the deeplink below: it has to fire inside the
+  // click's user gesture, or browsers may block the custom-scheme navigation.
+  const isAbsolute = isAbsolutePath(loc.file)
   // Checked here rather than at module scope, so production builds can drop it.
-  const pluginRoot = /^(\/|[A-Za-z]:)/.test(SERVED_ROOT) ? SERVED_ROOT : ""
+  const pluginRoot = isAbsolutePath(SERVED_ROOT) ? SERVED_ROOT : ""
   const root = pluginRoot || projectRoot
   // Absolute paths are used as-is; only project-relative paths get root
   // prefixed. Trailing slashes go only here, so a root of "/" still counts.
@@ -426,17 +441,25 @@ export function openInEditor(
           "unknown, so the dev server's own editor detection decides which " +
           "editor opens (and fails outright if `code` isn't on your PATH). Run " +
           "`npx open-in-code-editor@latest update` to add the Vite plugin that " +
-          "reports the root."
+          "supplies the root."
       )
     }
-    // Absolute whenever we know a root, the same path a concrete editor gets: a
-    // relative one is resolved against the dev server's working directory
-    // (Vite registers launch-editor without a root), which isn't the project
-    // root when Vite runs with `--root` or a `root` in its config.
-    const target = `${abs ?? loc.file}:${loc.line1}:${loc.column1}`
+    // Only hand over a root-prefixed path when the root came from Vite itself.
+    // `VITE_INSPECTOR_ROOT` is wherever the installer ran, and goes stale when
+    // the project moves; a relative path is resolved against the dev server's
+    // working directory instead (Vite registers launch-editor without a root),
+    // which is live.
+    const target = `${(pluginRoot && abs) || loc.file}:${loc.line1}:${loc.column1}`
     // Under the base, like Vite's own overlay: its base middleware 404s the
     // route at the origin root when `base` isn't "/".
-    fetch(`${ENV_BASE}__open-in-editor?file=${encodeURIComponent(target)}`).catch(() => {})
+    const res = await fetch(
+      `${ENV_BASE}__open-in-editor?file=${encodeURIComponent(target)}`
+    ).catch(() => null)
+    // No answer, or a proxy's gateway error: the dev server is down or
+    // restarting. Telling the user to reinstall would be wrong.
+    if (!res || res.status === 502 || res.status === 503 || res.status === 504) {
+      return "Couldn't reach the dev server (it may be restarting). Try again in a moment."
+    }
     return missingRoot
       ? `Can't open "${editor}": the inspector doesn't know your project path, ` +
           "so the dev server picked the editor. Run `npx " +
