@@ -6,7 +6,7 @@
 // Detects a Next.js app-router or a Vite + React project, copies the inspector
 // in with a relative import (no `@/` alias required), and wires the entry file
 // (layout.tsx for Next, main.tsx for Vite). On Vite it also registers a dev-only
-// plugin in vite.config so the dev server can report the project root that
+// plugin in vite.config so the dev server can supply the project root that
 // editor deeplinks need. Idempotent and dependency-free.
 // The entry wiring is never touched twice; `update`/`--force` only overwrites
 // the copied inspector files, so pin a version to upgrade:
@@ -121,7 +121,7 @@ if (inspectorExists && !force) {
   const resolver = framework === "next" ? "source.next.ts" : "source.vite.ts"
   for (const file of readdirSync(join(templates, "inspector"))) {
     if (file === "source.next.ts" || file === "source.vite.ts") continue
-    // The plugin is Vite's way of reporting the project root; Next.js gets that
+    // The plugin is Vite's way of supplying the project root; Next.js gets that
     // from its server render, so it has no use for the file.
     if (file === "vite-plugin.ts" && framework !== "vite") continue
     const src = join(templates, "inspector", file)
@@ -250,16 +250,17 @@ function wireVite() {
   writeEnvLocal()
   ensureGitignore()
 
-  // A pre-0.5.0 inspector/ that a plain re-run left in place doesn't know about
-  // the endpoint, so the plugin alone wouldn't help it — .env.local (above) is
-  // what keeps it working, and `update` is what upgrades it.
+  // An inspector/ from before 0.5.2 that a plain re-run left in place has no
+  // placeholder for this plugin to fill in. It still works — off its own older
+  // plugin, or .env.local (above) — and `update` is what brings it current.
   const resolver = join(inspectorDir, "source.ts")
   const staleResolver =
-    existsSync(resolver) && !readFileSync(resolver, "utf8").includes("__open-in-code-editor")
+    existsSync(resolver) &&
+    !readFileSync(resolver, "utf8").includes("__OPEN_IN_CODE_EDITOR_ROOT__")
   if (staleResolver) {
     log(
-      "• inspector/source.ts predates the dev-server plugin — run " +
-        "`npx open-in-code-editor@latest update` to use it.",
+      "• inspector/ is from an older version — run " +
+        "`npx open-in-code-editor@latest update` to refresh it.",
     )
   }
 

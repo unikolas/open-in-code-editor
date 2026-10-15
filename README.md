@@ -81,7 +81,7 @@ for `update`. It's a copy-in tool, not a dependency, so there's nothing for
 ```
 your-app/
   (src/)app/layout.tsx               # + import and a dev-only <Inspector/>
-  (src/)inspector/                   # Inspector.tsx, fiber.ts, source.ts, ui.tsx
+  (src/)inspector/                   # Inspector.tsx, fiber.ts, paths.ts, source.ts, ui.tsx
   (src/)app/api/inspector/route.ts   # optional: install-aware editor picker
 ```
 
@@ -91,7 +91,7 @@ your-app/
 your-app/
   vite.config.ts      # + import and inspectorPlugin() in plugins
   src/main.tsx        # + a dev-only <Inspector/> mount
-  src/inspector/      # Inspector.tsx, fiber.ts, source.ts, ui.tsx, vite-plugin.ts
+  src/inspector/      # Inspector.tsx, fiber.ts, paths.ts, source.ts, ui.tsx, vite-plugin.ts
   .env.local          # + VITE_INSPECTOR_ROOT (gitignored; fallback project root)
 ```
 
@@ -175,10 +175,18 @@ before it existed, or a `vite.config` the installer couldn't patch):
 npx open-in-code-editor@latest update
 ```
 
-Then check `vite.config.*` contains `inspectorPlugin()` and that
-`curl localhost:5173/__open-in-code-editor` returns your project root. A stale
-`VITE_INSPECTOR_ROOT` in `.env.local` is ignored once the plugin is in place
-(the inspector logs a warning naming both paths so you can delete the line).
+Then check `vite.config.*` contains `inspectorPlugin()`, and that the dev server
+writes your project root into the inspector:
+
+```bash
+curl -s localhost:5173/src/inspector/source.ts | grep SERVED_ROOT
+```
+
+should print your project's absolute path, not `__OPEN_IN_CODE_EDITOR_ROOT__`
+(adjust the port, add your `base` if you set one, and use the folder the
+installer copied `inspector/` into).
+A stale `VITE_INSPECTOR_ROOT` in `.env.local` is ignored once the plugin is in
+place.
 
 ## How it works
 
@@ -196,10 +204,9 @@ call site in compiled code — then maps those frames back to your `src/` files:
 
 Opening the editor is a plain `vscode://file/<path>:<line>:<column>`-style
 deeplink fired from the browser — no editor CLI on your `PATH` required. On
-Vite the absolute path comes from the dev-only plugin's
-`GET /__open-in-code-editor`, which reports Vite's own `root`
-(`VITE_INSPECTOR_ROOT` still works as a fallback for installs predating the
-plugin).
+Vite the absolute path comes from the dev-only plugin, which writes Vite's own
+`root` into the inspector as the dev server serves it (`VITE_INSPECTOR_ROOT`
+still works as a fallback for installs predating the plugin).
 
 Because the whole owner chain resolves — innermost (the element's own
 definition) through outermost (where it's used on the page) — a plain click
